@@ -3,21 +3,13 @@ from __future__ import annotations
 import asyncio
 import queue
 import threading
-from contextlib import asynccontextmanager
 from typing import Any
 
-import httpx
 from celery.result import AsyncResult
 
 from app.celery_builder.celery_app import celery_app
-from app.celery_builder.runner import run_fake_build
+from app.celery_builder.execution import run_fake_build_task
 from app.core.config import get_settings
-
-
-@asynccontextmanager
-async def build_control_plane_client(base_url: str):
-    async with httpx.AsyncClient(base_url=base_url.rstrip("/")) as client:
-        yield client
 
 
 @celery_app.task(name="celery_builder.process_build")
@@ -30,6 +22,8 @@ def _process_build_task(build_id: str) -> dict[str, Any]:
             service_token=settings.internal_service_token,
             service_name=settings.celery_builder_service_name,
             artifact_bucket=settings.celery_builder_artifact_bucket,
+            artifact_prefix=None,
+            manifest_key=None,
         )
     )
 
@@ -46,22 +40,7 @@ class ProcessBuildTask:
         return _process_build_task.apply_async(args=(build_id,), queue=queue)
 
 
-async def _run_fake_build_task(
-    *,
-    build_id: str,
-    base_url: str,
-    service_token: str,
-    service_name: str,
-    artifact_bucket: str,
-) -> dict[str, Any]:
-    async with build_control_plane_client(base_url) as client:
-        return await run_fake_build(
-            client,
-            build_id=build_id,
-            service_token=service_token,
-            service_name=service_name,
-            artifact_bucket=artifact_bucket,
-        )
+_run_fake_build_task = run_fake_build_task
 
 
 def _run_async(coro):

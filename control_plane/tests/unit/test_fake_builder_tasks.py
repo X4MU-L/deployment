@@ -76,4 +76,6 @@ def test_process_build_task_uses_current_settings(monkeypatch):
         "service_token": "svc-token",
         "service_name": "fake-builder",
         "artifact_bucket": "bucket",
+        "artifact_prefix": None,
+        "manifest_key": None,
     }

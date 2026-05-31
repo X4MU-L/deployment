@@ -1,4 +1,8 @@
-from app.background_builder.base import BackgroundBuildDispatchResult, BackgroundBuilder
+from app.background_builder.base import (
+    BackgroundBuildDispatchResult,
+    BackgroundBuilder,
+    BackgroundBuildRequest,
+)
 from app.celery_builder.tasks import ProcessBuildTask
 from app.core.config import get_settings
 
@@ -8,10 +12,10 @@ class CeleryBuilder(BackgroundBuilder):
 
     adapter_name = "celery"
 
-    def enqueue_build(self, build_id: str) -> BackgroundBuildDispatchResult:
+    def enqueue_build(self, request: BackgroundBuildRequest) -> BackgroundBuildDispatchResult:
         settings = get_settings()
         async_result = ProcessBuildTask.apply_async(
-            build_id=build_id,
+            build_id=request.build_id,
             queue=settings.celery_builder_queue_name,
         )
         return BackgroundBuildDispatchResult(

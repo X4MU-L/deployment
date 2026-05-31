@@ -13,6 +13,7 @@ class ReleaseRepository:
     async def list_releases_for_user(self, environment_id: str, user_id: str) -> list[Release]: ...
     async def create_release(
         self,
+        release_id: str | None,
         project_id: str,
         environment_id: str,
         build_id: str,
@@ -82,6 +83,7 @@ class SqlAlchemyReleaseRepository(ReleaseRepository):
 
     async def create_release(
         self,
+        release_id: str | None,
         project_id: str,
         environment_id: str,
         build_id: str,
@@ -90,6 +92,7 @@ class SqlAlchemyReleaseRepository(ReleaseRepository):
         manifest_ref: str | None = None,
     ) -> Release:
         release = Release(
+            id=release_id,
             project_id=project_id,
             environment_id=environment_id,
             build_id=build_id,

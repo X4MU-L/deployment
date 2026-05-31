@@ -1,4 +1,6 @@
 from contextlib import asynccontextmanager
+import json
+from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -53,6 +55,7 @@ async def test_user_can_go_from_login_to_release_with_celery_fake_builder(
     db_session,
     monkeypatch,
     e2e_client_factory,
+    local_artifact_store_root,
 ):
     previous_override = app.dependency_overrides.get(get_db)
 
@@ -102,9 +105,9 @@ async def test_user_can_go_from_login_to_release_with_celery_fake_builder(
 
         builds = []
 
-        def _fake_enqueue_build(build_id: str) -> str:
-            builds.append(build_id)
-            return f"celery-{build_id}"
+        def _fake_enqueue_build(request) -> str:
+            builds.append(request.build_id)
+            return f"celery-{request.build_id}"
 
         monkeypatch.setattr(
             "app.core.dependencies._background_builder",
@@ -114,10 +117,10 @@ async def test_user_can_go_from_login_to_release_with_celery_fake_builder(
                 {
                     "adapter_name": "celery",
                     "enqueue_build": staticmethod(
-                        lambda build_id: type(
+                        lambda request: type(
                             "Dispatch",
                             (),
-                            {"adapter": "celery", "job_id": _fake_enqueue_build(build_id)},
+                            {"adapter": "celery", "job_id": _fake_enqueue_build(request)},
                         )()
                     ),
                 },
@@ -130,11 +133,12 @@ async def test_user_can_go_from_login_to_release_with_celery_fake_builder(
         build_id = build_body["id"]
         assert build_body["builder_adapter"] == "celery"
         assert build_body["queue_job_id"] == f"celery-{build_id}"
+        assert build_body["planned_release_id"]
         assert build_body["triggered_by_user_id"] == user_id
         assert builds == [build_id]
 
         monkeypatch.setattr(
-            "app.celery_builder.tasks.build_control_plane_client", e2e_client_factory
+            "app.celery_builder.execution.build_control_plane_client", e2e_client_factory
         )
         result = await _run_fake_build_task(
             build_id=build_id,
@@ -160,10 +164,30 @@ async def test_user_can_go_from_login_to_release_with_celery_fake_builder(
         release = await client.get(f"/api/v1/builds/{build_id}/release")
         assert release.status_code == 200
         release_body = release.json()
+        artifact_ref = release_body["artifact_ref"]
+        manifest_ref = release_body["manifest_ref"]
 
         routes = await client.get(f"/api/v1/releases/{release_body['id']}/routes")
         assert routes.status_code == 200
         assert routes.json()[0]["hostname"].endswith(f".{settings.apps_base_domain}")
+        resolved_route = await client.get(
+            "/api/v1/internal/routes/resolve",
+            params={"hostname": routes.json()[0]["hostname"]},
+            headers={
+                "Authorization": "Bearer dev-internal-service-token",
+                "X-Service-Name": "routing-worker",
+            },
+        )
+        assert resolved_route.status_code == 200
+        resolved_body = resolved_route.json()
+        assert resolved_body["static_origin"]["r2_bucket"] == "fake-static-artifacts"
+        assert resolved_body["static_origin"]["r2_prefix"] == artifact_ref.removeprefix(
+            "r2://fake-static-artifacts/"
+        ).rstrip("/")
+        assert resolved_body["static_origin"]["manifest_path"] == manifest_ref.removeprefix(
+            "r2://fake-static-artifacts/"
+        )
+        assert resolved_body["static_origin"]["index_document"] == "index.html"
 
         project_row = (
             await db_session.execute(select(Project).where(Project.id == project_id))
@@ -192,8 +216,24 @@ async def test_user_can_go_from_login_to_release_with_celery_fake_builder(
         assert build_row.builder_adapter == "celery"
         assert build_row.queue_job_id == f"celery-{build_id}"
         assert release_row.build_id == build_id
+        assert release_row.id == build_body["planned_release_id"]
         assert route_row.hostname.endswith(f".{settings.apps_base_domain}")
         assert len(log_rows) >= 4
+        artifact_key = artifact_ref.removeprefix("r2://fake-static-artifacts/")
+        manifest_key = manifest_ref.removeprefix("r2://fake-static-artifacts/")
+        artifact_root = Path(local_artifact_store_root) / "fake-static-artifacts" / artifact_key
+        manifest_path = Path(local_artifact_store_root) / "fake-static-artifacts" / manifest_key
+        assert (artifact_root / "index.html").exists()
+        assert any(path.name.startswith("app-") for path in (artifact_root / "assets").iterdir())
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        assert manifest["schema"] == "static_release_manifest.v1"
+        assert manifest["project_id"] == project_id
+        assert manifest["build_id"] == build_id
+        assert manifest["release_id"] == release_body["id"]
+        assert {asset["path"] for asset in manifest["assets"]} == {
+            "index.html",
+            f"assets/app-{build_id[:8]}.js",
+        }
         assert [row.action for row in audit_rows] == [
             "project.created",
             "build.triggered",
@@ -210,7 +250,7 @@ async def test_user_can_go_from_login_to_release_with_celery_fake_builder(
 
 @pytest.mark.asyncio
 async def test_private_repo_flow_fails_without_release(
-    client, db_session, monkeypatch, e2e_client_factory
+    client, db_session, monkeypatch, e2e_client_factory, local_artifact_store_root
 ):
     previous_override = app.dependency_overrides.get(get_db)
 
@@ -262,10 +302,10 @@ async def test_private_repo_flow_fails_without_release(
                 {
                     "adapter_name": "celery",
                     "enqueue_build": staticmethod(
-                        lambda build_id: type(
+                        lambda request: type(
                             "Dispatch",
                             (),
-                            {"adapter": "celery", "job_id": f"celery-{build_id}"},
+                            {"adapter": "celery", "job_id": f"celery-{request.build_id}"},
                         )()
                     ),
                 },
@@ -276,7 +316,7 @@ async def test_private_repo_flow_fails_without_release(
         build_id = trigger.json()["id"]
 
         monkeypatch.setattr(
-            "app.celery_builder.tasks.build_control_plane_client", e2e_client_factory
+            "app.celery_builder.execution.build_control_plane_client", e2e_client_factory
         )
         result = await _run_fake_build_task(
             build_id=build_id,
@@ -303,6 +343,8 @@ async def test_private_repo_flow_fails_without_release(
         assert build_row.status == "failed"
         assert "private repositories" in (build_row.error_message or "")
         assert release_rows == []
+        bucket_root = Path(local_artifact_store_root) / settings.celery_builder_artifact_bucket
+        assert not bucket_root.exists()
     finally:
         if previous_override is None:
             app.dependency_overrides.pop(get_db, None)

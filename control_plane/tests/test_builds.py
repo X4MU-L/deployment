@@ -46,6 +46,7 @@ async def test_trigger_build_uses_project_scope_and_snapshots(auth_client):
     assert body["environment_id"] == env_id
     assert body["trigger_source"] == "user"
     assert body["triggered_by_user_id"]
+    assert body["planned_release_id"]
     assert body["build_config"]["build_command"] == "pnpm build"
     assert body["source_snapshot"]["repo_url"] == "https://github.com/ex/build"
     assert body["source_snapshot"]["project_name"] == "build-test"
@@ -117,4 +118,5 @@ async def test_internal_build_complete_creates_release_and_route(auth_client):
     body = completed.json()
     assert body["build"]["status"] == "succeeded"
     assert body["release"]["release"]["build_id"] == build_id
+    assert body["release"]["release"]["id"] == build.json()["planned_release_id"]
     assert body["release"]["route"]["hostname"].endswith(".apps.example.com")

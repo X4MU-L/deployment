@@ -29,6 +29,7 @@ async def test_trigger_build_stores_nullable_job_id_for_non_celery_builder():
                 source_snapshot={},
                 build_config={"build_command": "npm run build"},
                 env_snapshot=None,
+                planned_release_id="release-1",
                 builder_adapter=None,
                 queue_job_id=None,
                 artifact_ref=None,
@@ -53,6 +54,7 @@ async def test_trigger_build_stores_nullable_job_id_for_non_celery_builder():
                 source_snapshot={},
                 build_config={"build_command": "npm run build"},
                 env_snapshot=None,
+                planned_release_id="release-1",
                 builder_adapter="cloudflare",
                 queue_job_id=None,
                 artifact_ref=None,
@@ -83,7 +85,7 @@ async def test_trigger_build_stores_nullable_job_id_for_non_celery_builder():
     audit = SimpleNamespace(record=AsyncMock(spec=AuditService.record))
     background_builder = SimpleNamespace(
         adapter_name="cloudflare",
-        enqueue_build=lambda build_id: BackgroundBuildDispatchResult(adapter="cloudflare", job_id=None),
+        enqueue_build=lambda request: BackgroundBuildDispatchResult(adapter="cloudflare", job_id=None),
     )
 
     service = BuildService(repo, project_repo, environment_repo, audit, background_builder)
@@ -118,6 +120,7 @@ async def test_trigger_build_marks_failed_when_background_enqueue_errors():
                 source_snapshot={},
                 build_config=None,
                 env_snapshot=None,
+                planned_release_id="release-1",
                 builder_adapter=None,
                 queue_job_id=None,
                 artifact_ref=None,
@@ -151,9 +154,9 @@ async def test_trigger_build_marks_failed_when_background_enqueue_errors():
     class _FailingBuilder:
         adapter_name = "cloudflare"
 
-        def enqueue_build(self, build_id: str):
+        def enqueue_build(self, request):
             raise NotImplementedError(
-                "CF_BUILDER_NOT_IMPLEMENTED: Cloudflare builder adapter is not implemented yet"
+                "CF_QUEUE_PRODUCER_NOT_IMPLEMENTED: Cloudflare queue producer is not implemented yet"
             )
 
     service = BuildService(repo, project_repo, environment_repo, audit, _FailingBuilder())

@@ -6,6 +6,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.core.config import settings
 from app.core.dependencies import get_db
 from app.db.models import *  # noqa: F403
 from app.db.models.base import Base
@@ -33,6 +34,14 @@ async def setup_db():
     yield
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
+
+
+@pytest.fixture(autouse=True)
+def local_artifact_store_root(tmp_path, monkeypatch):
+    artifact_root = tmp_path / "artifacts"
+    monkeypatch.setattr(settings, "artifact_store_root", str(artifact_root))
+    monkeypatch.setattr(settings, "artifact_store_provider", "local")
+    return artifact_root
 
 
 @pytest_asyncio.fixture

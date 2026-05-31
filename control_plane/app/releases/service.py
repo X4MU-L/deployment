@@ -1,5 +1,6 @@
 import re
 
+from app.artifact_store.base import ArtifactStore, parse_r2_uri
 from app.audit.service import AuditService
 from app.core.config import get_settings
 from app.core.exceptions import NotFoundError
@@ -8,12 +9,14 @@ from app.releases.schemas import ReleaseCreate, RouteCreate
 
 
 class ReleaseService:
-    def __init__(self, repo: ReleaseRepository, audit: AuditService):
+    def __init__(self, repo: ReleaseRepository, audit: AuditService, artifact_store: ArtifactStore):
         self._repo = repo
         self._audit = audit
+        self._artifact_store = artifact_store
 
     async def create_release(self, data: ReleaseCreate) -> dict:
         release = await self._repo.create_release(
+            release_id=None,
             project_id=data.project_id,
             environment_id=data.environment_id,
             build_id=data.build_id,
@@ -78,6 +81,7 @@ class ReleaseService:
         actor_type: str,
         actor_user_id: str | None,
         actor_service: str | None,
+        release_id: str,
         project_id: str,
         environment_id: str,
         build_id: str,
@@ -86,10 +90,17 @@ class ReleaseService:
         project_name: str,
     ) -> dict:
         release = await self._repo.create_release(
+            release_id=release_id,
             project_id=project_id,
             environment_id=environment_id,
             build_id=build_id,
             artifact_ref=artifact_ref,
+            manifest_ref=manifest_ref,
+        )
+        self._finalize_static_manifest(
+            project_id=project_id,
+            build_id=build_id,
+            release_id=release.id,
             manifest_ref=manifest_ref,
         )
         hostname = _default_hostname(project_name, project_id)
@@ -110,6 +121,32 @@ class ReleaseService:
             "route": self._route_to_dict(route),
         }
 
+    def _finalize_static_manifest(
+        self,
+        *,
+        project_id: str,
+        build_id: str,
+        release_id: str,
+        manifest_ref: str,
+    ) -> None:
+        location = parse_r2_uri(manifest_ref)
+        if not location.bucket or not location.key:
+            return
+
+        try:
+            if not self._artifact_store.exists(bucket=location.bucket, key=location.key):
+                return
+            manifest = self._artifact_store.read_json(bucket=location.bucket, key=location.key)
+        except (NotImplementedError, RuntimeError):
+            return
+        manifest["project_id"] = project_id
+        manifest["build_id"] = build_id
+        manifest["release_id"] = release_id
+        try:
+            self._artifact_store.write_json(bucket=location.bucket, key=location.key, data=manifest)
+        except (NotImplementedError, RuntimeError):
+            return
+
     async def resolve_route(self, hostname: str) -> dict:
         route = await self._repo.get_route_by_hostname(hostname)
         if route is None:
@@ -118,9 +155,11 @@ class ReleaseService:
         if release is None:
             raise NotFoundError("Release", route.release_id)
         settings = get_settings()
-        manifest_path = (release.manifest_ref or "").removeprefix("r2://")
-        artifact_path = (release.artifact_ref or "").removeprefix("r2://")
-        bucket, _, prefix = artifact_path.partition("/")
+        manifest_location = parse_r2_uri(release.manifest_ref)
+        artifact_location = parse_r2_uri(release.artifact_ref)
+        manifest = self._load_static_manifest(release.manifest_ref)
+        index_document = manifest.get("index_document") if manifest else "index.html"
+        bucket = artifact_location.bucket or manifest_location.bucket
         return {
             "hostname": hostname,
             "route_kind": "static",
@@ -130,11 +169,26 @@ class ReleaseService:
             "invalidation_version": route.invalidation_version,
             "static_origin": {
                 "r2_bucket": bucket,
-                "r2_prefix": prefix,
-                "manifest_path": manifest_path,
-                "index_document": "index.html",
+                "r2_prefix": artifact_location.key.rstrip("/"),
+                "manifest_path": manifest_location.key,
+                "index_document": index_document,
             },
         }
+
+    def _load_static_manifest(self, manifest_ref: str | None) -> dict | None:
+        if not manifest_ref:
+            return None
+
+        location = parse_r2_uri(manifest_ref)
+        if not location.bucket or not location.key:
+            return None
+
+        try:
+            if not self._artifact_store.exists(bucket=location.bucket, key=location.key):
+                return None
+            return self._artifact_store.read_json(bucket=location.bucket, key=location.key)
+        except (NotImplementedError, RuntimeError):
+            return None
 
 
 def _default_hostname(project_name: str, project_id: str) -> str:
