@@ -7,9 +7,16 @@ from app.db.models.deployment import Deployment
 
 class DeploymentRepository:
     async def get_by_id(self, deployment_id: str) -> Deployment | None: ...
+    async def get_by_id_for_user(self, deployment_id: str, user_id: str) -> Deployment | None: ...
     async def list_by_environment(self, environment_id: str) -> list[Deployment]: ...
+    async def list_by_environment_for_user(
+        self, environment_id: str, user_id: str
+    ) -> list[Deployment]: ...
     async def create(
-        self, build_id: str, environment_id: str, replicas: int,
+        self,
+        build_id: str,
+        environment_id: str,
+        replicas: int,
     ) -> Deployment: ...
     async def update(self, deployment_id: str, **fields) -> Deployment: ...
 
@@ -24,6 +31,18 @@ class SqlAlchemyDeploymentRepository(DeploymentRepository):
     async def get_by_id(self, deployment_id: str) -> Deployment | None:
         return await self._db.get(Deployment, deployment_id)
 
+    async def get_by_id_for_user(self, deployment_id: str, user_id: str) -> Deployment | None:
+        from app.db.models.environment import Environment
+        from app.db.models.project import Project
+
+        result = await self._db.execute(
+            select(Deployment)
+            .join(Environment, Environment.id == Deployment.environment_id)
+            .join(Project, Project.id == Environment.project_id)
+            .where(Deployment.id == deployment_id, Project.user_id == user_id)
+        )
+        return result.scalar_one_or_none()
+
     async def list_by_environment(self, environment_id: str) -> list[Deployment]:
         result = await self._db.execute(
             select(Deployment)
@@ -32,12 +51,30 @@ class SqlAlchemyDeploymentRepository(DeploymentRepository):
         )
         return list(result.scalars().all())
 
+    async def list_by_environment_for_user(
+        self, environment_id: str, user_id: str
+    ) -> list[Deployment]:
+        from app.db.models.environment import Environment
+        from app.db.models.project import Project
+
+        result = await self._db.execute(
+            select(Deployment)
+            .join(Environment, Environment.id == Deployment.environment_id)
+            .join(Project, Project.id == Environment.project_id)
+            .where(Deployment.environment_id == environment_id, Project.user_id == user_id)
+            .order_by(Deployment.created_at.desc())
+        )
+        return list(result.scalars().all())
+
     async def create(self, build_id: str, environment_id: str, replicas: int) -> Deployment:
         deployment = Deployment(
-            build_id=build_id, environment_id=environment_id, replicas=replicas,
+            build_id=build_id,
+            environment_id=environment_id,
+            replicas=replicas,
         )
         self._db.add(deployment)
         await self._db.flush()
+        await self._db.refresh(deployment)
         return deployment
 
     async def update(self, deployment_id: str, **fields) -> Deployment:
@@ -48,4 +85,5 @@ class SqlAlchemyDeploymentRepository(DeploymentRepository):
             if value is not None and hasattr(deployment, key):
                 setattr(deployment, key, value)
         await self._db.flush()
+        await self._db.refresh(deployment)
         return deployment

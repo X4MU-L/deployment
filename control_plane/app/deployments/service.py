@@ -23,12 +23,12 @@ class DeploymentService:
         )
         return self._to_dict(deployment)
 
-    async def list_deployments(self, environment_id: str) -> list[dict]:
-        deployments = await self._repo.list_by_environment(environment_id)
+    async def list_deployments(self, user_id: str, environment_id: str) -> list[dict]:
+        deployments = await self._repo.list_by_environment_for_user(environment_id, user_id)
         return [self._to_dict(d) for d in deployments]
 
-    async def get_deployment(self, deployment_id: str) -> dict:
-        deployment = await self._repo.get_by_id(deployment_id)
+    async def get_deployment(self, user_id: str, deployment_id: str) -> dict:
+        deployment = await self._repo.get_by_id_for_user(deployment_id, user_id)
         if deployment is None:
             raise NotFoundError("Deployment", deployment_id)
         return self._to_dict(deployment)
