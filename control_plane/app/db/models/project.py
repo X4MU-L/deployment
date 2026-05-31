@@ -12,6 +12,7 @@ class Project(Base, BaseMixin):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     repo_url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    default_branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
     github_connection_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("github_connections.id"), nullable=True, index=True
     )

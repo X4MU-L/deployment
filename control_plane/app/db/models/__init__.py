@@ -1,3 +1,4 @@
+from app.db.models.audit_event import AuditEvent
 from app.db.models.build import Build
 from app.db.models.deployment import Deployment
 from app.db.models.environment import Environment
@@ -9,6 +10,7 @@ from app.db.models.release import Release, Route
 from app.db.models.user import User
 
 __all__ = [
+    "AuditEvent",
     "Build",
     "Deployment",
     "Environment",
