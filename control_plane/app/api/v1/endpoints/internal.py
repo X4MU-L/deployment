@@ -23,7 +23,7 @@ router = APIRouter(prefix="/internal", tags=["internal"])
 @router.get("/builds/{build_id}", response_model=BuildResponse)
 async def get_build_for_service(
     build_id: str,
-    service: CurrentService,
+    _service: CurrentService,
     svc: BuildServiceDep,
 ):
     return await svc.get_build_internal(build_id)
@@ -33,7 +33,7 @@ async def get_build_for_service(
 async def update_build_status(
     build_id: str,
     body: BuildStatusUpdate,
-    service: CurrentService,
+    _service: CurrentService,
     svc: BuildServiceDep,
 ):
     transition = BuildTransition(
@@ -48,7 +48,7 @@ async def update_build_status(
 async def ingest_build_logs(
     build_id: str,
     body: BuildLogIngestRequest,
-    service: CurrentService,
+    _service: CurrentService,
     svc: LogServiceDep,
 ):
     return await svc.ingest(
@@ -71,7 +71,7 @@ async def complete_build(
     release_svc: ReleaseServiceDep,
     audit_svc: AuditServiceDep,
 ):
-    build = await build_svc.get_build_internal(build_id)  # noqa: F841
+
     transition = BuildTransition(
         status=body.status,
         artifact_ref=body.artifact_ref,
@@ -91,6 +91,7 @@ async def complete_build(
             actor_type="service",
             actor_user_id=None,
             actor_service=service.service_name,
+            release_id=updated["planned_release_id"],
             project_id=updated["project_id"],
             environment_id=updated["environment_id"],
             build_id=updated["id"],
