@@ -12,31 +12,32 @@ router = APIRouter(prefix="/github", tags=["github"])
 
 
 @router.post("/connections", response_model=GithubConnectionResponse, status_code=201)
-async def create_connection(body: GithubConnectionCreate, svc: GithubServiceDep):
+async def create_connection(body: GithubConnectionCreate, user: CurrentUser, svc: GithubServiceDep):
 
-    return await svc.create_connection(body)
+    return await svc.create_connection(user.user_id, body)
 
 
 @router.get("/connections", response_model=list[GithubConnectionResponse])
-async def list_connections(svc: GithubServiceDep):
+async def list_connections(user: CurrentUser, svc: GithubServiceDep):
 
-    return await svc.list_connections()
+    return await svc.list_connections(user.user_id)
 
 
 @router.delete("/connections/{conn_id}", status_code=204)
-async def delete_connection(conn_id: str, svc: GithubServiceDep):
+async def delete_connection(conn_id: str, user: CurrentUser, svc: GithubServiceDep):
 
-    return await svc.delete_connection(conn_id)
+    return await svc.delete_connection(user.user_id, conn_id)
 
 
 @router.get("/connections/{conn_id}/repos")
 async def list_connection_repos(
     conn_id: str,
+    user: CurrentUser,
     svc: GithubServiceDep,
     search: str | None = Query(default=None, min_length=1),
 ):
 
-    return await svc.list_repositories(conn_id, search=search)
+    return await svc.list_repositories(user.user_id, conn_id, search=search)
 
 
 @router.post("/projects/import")

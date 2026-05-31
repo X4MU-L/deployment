@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.core.dependencies import DeploymentServiceDep
+from app.core.dependencies import CurrentUser, DeploymentServiceDep
 from app.deployments.schemas import DeploymentCreate, DeploymentResponse, DeploymentTransition
 
 router = APIRouter(prefix="/deployments", tags=["deployments"])
@@ -12,13 +12,13 @@ async def create_deployment(body: DeploymentCreate, svc: DeploymentServiceDep):
 
 
 @router.get("/{deployment_id}", response_model=DeploymentResponse)
-async def get_deployment(deployment_id: str, svc: DeploymentServiceDep):
-    return await svc.get_deployment(deployment_id)
+async def get_deployment(deployment_id: str, user: CurrentUser, svc: DeploymentServiceDep):
+    return await svc.get_deployment(user.user_id, deployment_id)
 
 
 @router.get("/environment/{environment_id}", response_model=list[DeploymentResponse])
-async def list_deployments(environment_id: str, svc: DeploymentServiceDep):
-    return await svc.list_deployments(environment_id)
+async def list_deployments(environment_id: str, user: CurrentUser, svc: DeploymentServiceDep):
+    return await svc.list_deployments(user.user_id, environment_id)
 
 
 @router.patch("/{deployment_id}/transition", response_model=DeploymentResponse)

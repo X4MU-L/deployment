@@ -7,7 +7,7 @@ from app.api.v1.endpoints import (
     environments,
     github,
     health,
-    logs,
+    internal,
     projects,
     releases,
 )
@@ -20,5 +20,5 @@ v1_router.include_router(environments.router)
 v1_router.include_router(builds.router)
 v1_router.include_router(deployments.router)
 v1_router.include_router(releases.router)
-v1_router.include_router(logs.router)
+v1_router.include_router(internal.router)
 v1_router.include_router(github.router)
