@@ -45,7 +45,8 @@ class BuildResponse(BaseModel):
     source_snapshot: dict | None = None
     build_config: dict | None = None
     env_snapshot: dict | None = None
-    queue_job_id: str | None = None
+    builder_adapter: str | None = None
+    queue_job_id: str | None = None  # adapter-specific async job reference
     artifact_ref: str | None
     error_message: str | None
     created_at: datetime

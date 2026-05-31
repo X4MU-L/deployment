@@ -107,14 +107,28 @@ async def test_user_can_go_from_login_to_release_with_celery_fake_builder(
             return f"celery-{build_id}"
 
         monkeypatch.setattr(
-            "app.core.dependencies._fake_builder_dispatcher",
-            lambda: type("Dispatcher", (), {"enqueue_build": staticmethod(_fake_enqueue_build)})(),
+            "app.core.dependencies._background_builder",
+            lambda: type(
+                "Builder",
+                (),
+                {
+                    "adapter_name": "celery",
+                    "enqueue_build": staticmethod(
+                        lambda build_id: type(
+                            "Dispatch",
+                            (),
+                            {"adapter": "celery", "job_id": _fake_enqueue_build(build_id)},
+                        )()
+                    ),
+                },
+            )(),
         )
 
         trigger = await client.post(f"/api/v1/projects/{project_id}/builds", json={})
         assert trigger.status_code == 201
         build_body = trigger.json()
         build_id = build_body["id"]
+        assert build_body["builder_adapter"] == "celery"
         assert build_body["queue_job_id"] == f"celery-{build_id}"
         assert build_body["triggered_by_user_id"] == user_id
         assert builds == [build_id]
@@ -175,6 +189,7 @@ async def test_user_can_go_from_login_to_release_with_celery_fake_builder(
         )
 
         assert project_row.repo_url == "https://github.com/X4MU-L/lendsqr-fe-test"
+        assert build_row.builder_adapter == "celery"
         assert build_row.queue_job_id == f"celery-{build_id}"
         assert release_row.build_id == build_id
         assert route_row.hostname.endswith(f".{settings.apps_base_domain}")
@@ -240,11 +255,20 @@ async def test_private_repo_flow_fails_without_release(
         project_id = project.json()["id"]
 
         monkeypatch.setattr(
-            "app.core.dependencies._fake_builder_dispatcher",
+            "app.core.dependencies._background_builder",
             lambda: type(
-                "Dispatcher",
+                "Builder",
                 (),
-                {"enqueue_build": staticmethod(lambda build_id: f"celery-{build_id}")},
+                {
+                    "adapter_name": "celery",
+                    "enqueue_build": staticmethod(
+                        lambda build_id: type(
+                            "Dispatch",
+                            (),
+                            {"adapter": "celery", "job_id": f"celery-{build_id}"},
+                        )()
+                    ),
+                },
             )(),
         )
 

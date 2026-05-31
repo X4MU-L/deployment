@@ -60,10 +60,10 @@ def test_process_build_task_uses_current_settings(monkeypatch):
             "Settings",
             (),
             {
-                "fake_builder_base_url": "http://cp.internal",
                 "internal_service_token": "svc-token",
-                "fake_builder_service_name": "fake-builder",
-                "fake_builder_artifact_bucket": "bucket",
+                "celery_builder_service_name": "fake-builder",
+                "celery_builder_artifact_bucket": "bucket",
+                "celery_builder_base_url": "http://cp.internal",
             },
         )(),
     )

@@ -8,9 +8,11 @@ This service now supports a complete v1 static flow for manual public GitHub rep
 4. Let the fake builder worker pick up the queued build.
 5. Read build logs, build status, release details, and active route through user-scoped APIs.
 
-## Fake Builder Worker
+## Temporary CeleryBuilder Adapter
 
-Use the Celery-backed fake builder while the real queue consumer and Docker executor are still being developed.
+The current local background build plane is a temporary **CeleryBuilder** adapter.
+It is useful for local development and automated tests, but it is **not** the final
+Cloudflare Queues worker described in the product docs.
 
 ```bash
 cd control_plane
@@ -20,8 +22,13 @@ uv run fake-builder-worker
 When a user triggers `POST /api/v1/projects/{project_id}/builds`, the control plane:
 
 - creates the build in `queued` state
-- dispatches `fake_builder.process_build` to Celery
-- stores the returned `queue_job_id` on the build record
+- resolves a `BackgroundBuilder` implementation from config
+- uses the local `CeleryBuilder` adapter when `background_builder_provider=fake-builder`
+- dispatches `celery_builder.process_build` to Celery
+- stores the returned `queue_job_id` on the build record as an adapter-specific job reference
+
+The future `CFBuilder` adapter is intentionally separate and still unimplemented in this pass.
+It will eventually replace the local adapter for the production Cloudflare Queues path.
 
 The worker then:
 

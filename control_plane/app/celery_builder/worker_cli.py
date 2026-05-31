@@ -10,6 +10,6 @@ def main() -> None:
             "--loglevel=INFO",
             "--pool=solo",
             "-Q",
-            settings.fake_builder_queue_name,
+            settings.celery_builder_queue_name,
         ]
     )

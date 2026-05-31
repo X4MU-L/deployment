@@ -3,7 +3,7 @@ def test_worker_cli_boots_celery_with_expected_queue(monkeypatch):
 
     monkeypatch.setattr(
         "app.celery_builder.worker_cli.get_settings",
-        lambda: type("Settings", (), {"fake_builder_queue_name": "fake-builder"})(),
+        lambda: type("Settings", (), {"celery_builder_queue_name": "fake-builder"})(),
     )
     monkeypatch.setattr(
         "app.celery_builder.worker_cli.celery_app.worker_main",

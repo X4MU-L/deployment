@@ -1,7 +1,7 @@
 from app.audit.service import AuditService
+from app.background_builder.base import BackgroundBuilder
 from app.builds.repository import BuildRepository
 from app.builds.schemas import BuildCreate, BuildTransition, BuildTriggerRequest
-from app.celery_builder.dispatcher import FakeBuilderDispatcher
 from app.core.exceptions import InvalidTransitionError, NotFoundError, ServiceUnavailableError
 from app.environments.repository import EnvironmentRepository
 from app.projects.repository import ProjectRepository
@@ -26,13 +26,13 @@ class BuildService:
         project_repo: ProjectRepository,
         environment_repo: EnvironmentRepository,
         audit: AuditService,
-        dispatcher: FakeBuilderDispatcher,
+        background_builder: BackgroundBuilder,
     ):
         self._repo = repo
         self._project_repo = project_repo
         self._environment_repo = environment_repo
         self._audit = audit
-        self._dispatcher = dispatcher
+        self._background_builder = background_builder
 
     async def create_build(self, data: BuildCreate) -> dict:
         correlation_id = data.correlation_id or _new_correlation_id()
@@ -93,35 +93,41 @@ class BuildService:
             build_id=build["id"],
             metadata={"environment_id": environment.id},
         )
+        adapter_name = self._background_builder.adapter_name
         try:
-            queue_job_id = self._dispatcher.enqueue_build(build["id"])
+            dispatch = self._background_builder.enqueue_build(build["id"])
         except Exception as exc:
             await self._repo.update(
                 build["id"],
+                builder_adapter=adapter_name,
                 status="failed",
-                error_message="Failed to enqueue fake builder job",
+                error_message=f"Failed to enqueue build via {adapter_name} adapter",
             )
             await self._audit.record(
                 actor_type="system",
                 action="build.enqueue_failed",
-                actor_service="fake-builder-dispatcher",
+                actor_service=adapter_name,
                 project_id=project.id,
                 build_id=build["id"],
-                metadata={"error": str(exc)},
+                metadata={"adapter": adapter_name, "error": str(exc)},
             )
             raise ServiceUnavailableError(
-                message="Failed to enqueue fake builder job",
+                message=f"Failed to enqueue build via {adapter_name} adapter",
                 code="BUILD_DISPATCH_FAILED",
             ) from exc
 
-        updated = await self._repo.update(build["id"], queue_job_id=queue_job_id)
+        updated = await self._repo.update(
+            build["id"],
+            builder_adapter=dispatch.adapter,
+            queue_job_id=dispatch.job_id,
+        )
         await self._audit.record(
             actor_type="system",
             action="build.enqueued",
-            actor_service="fake-builder-dispatcher",
+            actor_service=dispatch.adapter,
             project_id=project.id,
             build_id=build["id"],
-            metadata={"queue_job_id": queue_job_id},
+            metadata={"adapter": dispatch.adapter, "queue_job_id": dispatch.job_id},
         )
         return self._to_dict(updated)
 
@@ -180,6 +186,7 @@ class BuildService:
             "source_snapshot": getattr(b, "source_snapshot", None),
             "build_config": getattr(b, "build_config", None),
             "env_snapshot": getattr(b, "env_snapshot", None),
+            "builder_adapter": getattr(b, "builder_adapter", None),
             "queue_job_id": getattr(b, "queue_job_id", None),
             "artifact_ref": b.artifact_ref,
             "error_message": b.error_message,

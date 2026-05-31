@@ -20,16 +20,16 @@ async def build_control_plane_client(base_url: str):
         yield client
 
 
-@celery_app.task(name="fake_builder.process_build")
+@celery_app.task(name="celery_builder.process_build")
 def _process_build_task(build_id: str) -> dict[str, Any]:
     settings = get_settings()
     return _run_async(
         _run_fake_build_task(
             build_id=build_id,
-            base_url=settings.fake_builder_base_url,
+            base_url=settings.celery_builder_base_url,
             service_token=settings.internal_service_token,
-            service_name=settings.fake_builder_service_name,
-            artifact_bucket=settings.fake_builder_artifact_bucket,
+            service_name=settings.celery_builder_service_name,
+            artifact_bucket=settings.celery_builder_artifact_bucket,
         )
     )
 

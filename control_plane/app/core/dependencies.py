@@ -12,9 +12,10 @@ from app.auth.social_service import SocialOAuthService
 from app.auth.tokens import TokenPayload, TokenService, decode_token
 from app.auth.user_auth_service import UserAuthService
 from app.auth.user_repository import SqlUserAuthRepository, UserAuthRepository
+from app.background_builder.base import BackgroundBuilder
+from app.background_builder.factory import build_background_builder
 from app.builds.repository import BuildRepository, SqlAlchemyBuildRepository
 from app.builds.service import BuildService
-from app.celery_builder.dispatcher import FakeBuilderDispatcher
 from app.core.config import get_settings
 from app.core.exceptions import UnauthorizedError
 from app.db.session import get_db
@@ -109,12 +110,12 @@ def _build_service(db: DbSession) -> BuildService:
         _project_repo(db),
         _environment_repo(db),
         _audit_service(_audit_repo(db)),
-        _fake_builder_dispatcher(),
+        _background_builder(),
     )
 
 
-def _fake_builder_dispatcher() -> FakeBuilderDispatcher:
-    return FakeBuilderDispatcher()
+def _background_builder() -> BackgroundBuilder:
+    return build_background_builder(get_settings())
 
 
 def _deployment_service(repo: DeploymentRepoDep) -> DeploymentService:
