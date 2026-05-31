@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -12,7 +13,7 @@ from app.core.exceptions import ServiceUnavailableError
 
 @pytest.mark.asyncio
 async def test_trigger_build_stores_nullable_job_id_for_non_celery_builder():
-    repo = SimpleNamespace(
+    repo: Any = SimpleNamespace(
         create=AsyncMock(
             return_value=SimpleNamespace(
                 id="build-1",
@@ -64,7 +65,7 @@ async def test_trigger_build_stores_nullable_job_id_for_non_celery_builder():
             )
         ),
     )
-    project_repo = SimpleNamespace(
+    project_repo: Any = SimpleNamespace(
         get_by_id_for_user=AsyncMock(
             return_value=SimpleNamespace(
                 id="project-1",
@@ -77,15 +78,15 @@ async def test_trigger_build_stores_nullable_job_id_for_non_celery_builder():
             )
         )
     )
-    environment_repo = SimpleNamespace(
-        get_by_project_and_name=AsyncMock(
-            return_value=SimpleNamespace(id="env-1", env_vars=None)
-        )
+    environment_repo: Any = SimpleNamespace(
+        get_by_project_and_name=AsyncMock(return_value=SimpleNamespace(id="env-1", env_vars=None))
     )
-    audit = SimpleNamespace(record=AsyncMock(spec=AuditService.record))
-    background_builder = SimpleNamespace(
+    audit: Any = SimpleNamespace(record=AsyncMock(spec=AuditService.record))
+    background_builder: Any = SimpleNamespace(
         adapter_name="cloudflare",
-        enqueue_build=lambda request: BackgroundBuildDispatchResult(adapter="cloudflare", job_id=None),
+        enqueue_build=lambda request: BackgroundBuildDispatchResult(
+            adapter="cloudflare", job_id=None
+        ),
     )
 
     service = BuildService(repo, project_repo, environment_repo, audit, background_builder)
@@ -103,7 +104,7 @@ async def test_trigger_build_stores_nullable_job_id_for_non_celery_builder():
 
 @pytest.mark.asyncio
 async def test_trigger_build_marks_failed_when_background_enqueue_errors():
-    repo = SimpleNamespace(
+    repo: Any = SimpleNamespace(
         create=AsyncMock(
             return_value=SimpleNamespace(
                 id="build-1",
@@ -131,7 +132,7 @@ async def test_trigger_build_marks_failed_when_background_enqueue_errors():
         ),
         update=AsyncMock(),
     )
-    project_repo = SimpleNamespace(
+    project_repo: Any = SimpleNamespace(
         get_by_id_for_user=AsyncMock(
             return_value=SimpleNamespace(
                 id="project-1",
@@ -144,12 +145,10 @@ async def test_trigger_build_marks_failed_when_background_enqueue_errors():
             )
         )
     )
-    environment_repo = SimpleNamespace(
-        get_by_project_and_name=AsyncMock(
-            return_value=SimpleNamespace(id="env-1", env_vars=None)
-        )
+    environment_repo: Any = SimpleNamespace(
+        get_by_project_and_name=AsyncMock(return_value=SimpleNamespace(id="env-1", env_vars=None))
     )
-    audit = SimpleNamespace(record=AsyncMock(spec=AuditService.record))
+    audit: Any = SimpleNamespace(record=AsyncMock(spec=AuditService.record))
 
     class _FailingBuilder:
         adapter_name = "cloudflare"
@@ -159,7 +158,9 @@ async def test_trigger_build_marks_failed_when_background_enqueue_errors():
                 "CF_QUEUE_PRODUCER_NOT_IMPLEMENTED: Cloudflare queue producer is not implemented yet"
             )
 
-    service = BuildService(repo, project_repo, environment_repo, audit, _FailingBuilder())
+    builder: Any = _FailingBuilder()
+
+    service = BuildService(repo, project_repo, environment_repo, audit, builder)
 
     with pytest.raises(ServiceUnavailableError) as exc:
         await service.trigger_build("user-1", "project-1", BuildTriggerRequest())

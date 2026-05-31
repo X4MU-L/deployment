@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import base64
 import json
+from typing import Any
 
 import httpx
-import pytest
 
 from app.cloudflare_builder.pull_consumer import (
     CloudflarePullConsumer,
@@ -58,7 +58,9 @@ def test_queue_client_pulls_and_acks_messages():
                 },
             )
         captured["ack"] = body
-        return httpx.Response(200, json={"success": True, "result": {"ackCount": 1, "retryCount": 0}})
+        return httpx.Response(
+            200, json={"success": True, "result": {"ackCount": 1, "retryCount": 0}}
+        )
 
     client = CloudflareQueueClient(
         api_base_url="https://api.cloudflare.com/client/v4",
@@ -132,7 +134,7 @@ def test_pull_consumer_acks_success_and_retries_failures():
             self.handled.append(message.build_id)
             return {"ok": True}
 
-    queue_client = _QueueClient()
+    queue_client: Any = _QueueClient()
     handler = _Handler()
     consumer = CloudflarePullConsumer(
         queue_client=queue_client,
@@ -160,8 +162,8 @@ def test_fake_build_message_handler_uses_message_artifact_target(monkeypatch):
         _fake_run_fake_build_task,
     )
 
-    payload = type(
-        "Message",
+    payload: Any = type(
+        "BuildRequestedMessage",
         (),
         {
             "build_id": "build-1",
@@ -195,8 +197,7 @@ def test_fake_build_message_handler_uses_message_artifact_target(monkeypatch):
                     "bucket": "static-artifacts",
                     "prefix": "projects/project-1/releases/release-1",
                     "manifest_key": (
-                        "projects/project-1/releases/release-1/"
-                        "static_release_manifest.v1.json"
+                        "projects/project-1/releases/release-1/static_release_manifest.v1.json"
                     ),
                 },
             )(),

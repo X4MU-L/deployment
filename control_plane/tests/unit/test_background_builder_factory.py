@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -8,15 +9,18 @@ from app.cloudflare_builder.builder import CFBuilder
 
 
 def test_factory_resolves_celery_builder_for_fake_builder_provider():
-    builder = build_background_builder(SimpleNamespace(background_builder_provider="fake-builder"))
+    settings: Any = SimpleNamespace(background_builder_provider="fake-builder")
+    builder = build_background_builder(settings)
     assert isinstance(builder, CeleryBuilder)
 
 
 def test_factory_resolves_cloudflare_builder_for_cloudflare_provider():
-    builder = build_background_builder(SimpleNamespace(background_builder_provider="cloudflare"))
+    settings: Any = SimpleNamespace(background_builder_provider="cloudflare")
+    builder = build_background_builder(settings)
     assert isinstance(builder, CFBuilder)
 
 
 def test_factory_rejects_unknown_provider():
+    settings: Any = SimpleNamespace(background_builder_provider="bogus")
     with pytest.raises(ValueError, match="Unsupported background builder provider: bogus"):
-        build_background_builder(SimpleNamespace(background_builder_provider="bogus"))
+        build_background_builder(settings)

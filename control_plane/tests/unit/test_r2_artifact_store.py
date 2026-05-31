@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from typing import Any
 
 import pytest
 from botocore.exceptions import ClientError
@@ -35,7 +36,7 @@ def test_r2_artifact_store_publishes_directory(tmp_path):
     assets_dir.mkdir()
     (assets_dir / "app.js").write_text("console.log('hi')", encoding="utf-8")
 
-    fake_client = _FakeS3Client()
+    fake_client: Any = _FakeS3Client()
     store = R2ArtifactStore(client=fake_client)
 
     uploaded = store.publish_directory(
@@ -45,12 +46,14 @@ def test_r2_artifact_store_publishes_directory(tmp_path):
     )
 
     assert uploaded == ["assets/app.js", "index.html"]
-    assert fake_client.objects[
-        ("static-artifacts", "projects/p1/releases/r1/index.html")
-    ] == b"<html></html>"
-    assert fake_client.objects[
-        ("static-artifacts", "projects/p1/releases/r1/assets/app.js")
-    ] == b"console.log('hi')"
+    assert (
+        fake_client.objects[("static-artifacts", "projects/p1/releases/r1/index.html")]
+        == b"<html></html>"
+    )
+    assert (
+        fake_client.objects[("static-artifacts", "projects/p1/releases/r1/assets/app.js")]
+        == b"console.log('hi')"
+    )
     assert (
         fake_client.content_types[("static-artifacts", "projects/p1/releases/r1/index.html")]
         == "text/html"
@@ -58,7 +61,7 @@ def test_r2_artifact_store_publishes_directory(tmp_path):
 
 
 def test_r2_artifact_store_json_round_trip():
-    fake_client = _FakeS3Client()
+    fake_client: Any = _FakeS3Client()
     store = R2ArtifactStore(client=fake_client)
 
     store.write_json(
@@ -73,15 +76,14 @@ def test_r2_artifact_store_json_round_trip():
 
     assert payload == {"hello": "world"}
     assert (
-        fake_client.content_types[
-            ("static-artifacts", "projects/p1/releases/r1/manifest.json")
-        ]
+        fake_client.content_types[("static-artifacts", "projects/p1/releases/r1/manifest.json")]
         == "application/json"
     )
 
 
 def test_r2_artifact_store_exists_handles_missing_object():
-    store = R2ArtifactStore(client=_FakeS3Client())
+    fake_client: Any = _FakeS3Client()
+    store = R2ArtifactStore(client=fake_client)
     assert not store.exists(bucket="static-artifacts", key="missing.json")
 
 

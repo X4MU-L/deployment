@@ -1,6 +1,6 @@
-import json
-import hmac
 import hashlib
+import hmac
+import json
 
 import pytest
 
@@ -25,9 +25,9 @@ def test_verify_signature_invalid():
 @pytest.mark.asyncio
 async def test_webhook_push_creates_build(db_session, client):
     # Create user
-    from app.db.models.user import User
     from app.db.models.github_connection import GithubConnection
     from app.db.models.project import Project
+    from app.db.models.user import User
 
     user = User(user_id="u1", email="webhook@example.com")
     db_session.add(user)
@@ -72,6 +72,7 @@ async def test_webhook_push_creates_build(db_session, client):
 
     # Ensure build created
     from sqlalchemy import select
+
     from app.db.models.build import Build
 
     result = await db_session.execute(select(Build).where(Build.project_id == project.id))

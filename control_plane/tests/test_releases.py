@@ -11,7 +11,9 @@ def _service_headers() -> dict[str, str]:
     }
 
 
-def _write_manifest(local_artifact_store_root, *, bucket: str, key: str, index_document: str) -> None:
+def _write_manifest(
+    local_artifact_store_root, *, bucket: str, key: str, index_document: str
+) -> None:
     target = Path(local_artifact_store_root) / bucket / key
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
@@ -38,7 +40,9 @@ def _write_manifest(local_artifact_store_root, *, bucket: str, key: str, index_d
     )
 
 
-async def _seed_release(auth_client, local_artifact_store_root, *, index_document: str = "index.html"):
+async def _seed_release(
+    auth_client, local_artifact_store_root, *, index_document: str = "index.html"
+):
     _write_manifest(
         local_artifact_store_root,
         bucket="artifacts",
@@ -72,7 +76,13 @@ async def _seed_release(auth_client, local_artifact_store_root, *, index_documen
         headers=_service_headers(),
     )
     body = completed.json()
-    return project_id, env_id, build_id, body["release"]["release"]["id"], body["release"]["route"]["hostname"]
+    return (
+        project_id,
+        env_id,
+        build_id,
+        body["release"]["release"]["id"],
+        body["release"]["route"]["hostname"],
+    )
 
 
 @pytest.mark.asyncio

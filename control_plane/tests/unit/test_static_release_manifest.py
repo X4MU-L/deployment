@@ -1,6 +1,5 @@
 import hashlib
 import json
-from pathlib import Path
 
 from app.artifact_store.local import LocalArtifactStore
 from app.static_releases.manifest import (
