@@ -1,0 +1,79 @@
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.exceptions import NotFoundError
+from app.db.models.build import Build
+
+
+class BuildRepository:
+    async def get_by_id(self, build_id: str) -> Build | None: ...
+    async def list_by_project(self, project_id: str) -> list[Build]: ...
+    async def create(
+        self,
+        project_id: str,
+        correlation_id: str,
+        attempt: int,
+        job_type: str,
+        source_ref: str | None = None,
+        commit_sha: str | None = None,
+        source_snapshot: dict | None = None,
+        build_config: dict | None = None,
+        env_snapshot: dict | None = None,
+    ) -> Build: ...
+    async def update(self, build_id: str, **fields) -> Build: ...
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+
+
+class SqlAlchemyBuildRepository(BuildRepository):
+    def __init__(self, db: AsyncSession):
+        self._db = db
+
+    async def get_by_id(self, build_id: str) -> Build | None:
+        return await self._db.get(Build, build_id)
+
+    async def list_by_project(self, project_id: str) -> list[Build]:
+        result = await self._db.execute(
+            select(Build).where(Build.project_id == project_id).order_by(Build.created_at.desc())
+        )
+        return list(result.scalars().all())
+
+    async def create(
+        self,
+        project_id: str,
+        correlation_id: str,
+        attempt: int,
+        job_type: str,
+        source_ref: str | None = None,
+        commit_sha: str | None = None,
+        source_snapshot: dict | None = None,
+        build_config: dict | None = None,
+        env_snapshot: dict | None = None,
+    ) -> Build:
+        build = Build(
+            project_id=project_id,
+            correlation_id=correlation_id,
+            attempt=attempt,
+            job_type=job_type,
+            source_ref=source_ref,
+            commit_sha=commit_sha,
+            source_snapshot=source_snapshot,
+            build_config=build_config,
+            env_snapshot=env_snapshot,
+        )
+        self._db.add(build)
+        await self._db.flush()
+        await self._db.refresh(build)
+        return build
+
+    async def update(self, build_id: str, **fields) -> Build:
+        build = await self.get_by_id(build_id)
+        if build is None:
+            raise NotFoundError("Build", build_id)
+        for key, value in fields.items():
+            if value is not None and hasattr(build, key):
+                setattr(build, key, value)
+        await self._db.flush()
+        await self._db.refresh(build)
+        return build
