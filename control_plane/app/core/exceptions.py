@@ -72,3 +72,12 @@ class InvalidTransitionError(AppError):
             message=f"{entity} cannot transition from '{current}' to '{target}'",
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
+
+
+class ServiceUnavailableError(AppError):
+    def __init__(self, message: str = "Service unavailable", code: str = "SERVICE_UNAVAILABLE"):
+        super().__init__(
+            code=code,
+            message=message,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )

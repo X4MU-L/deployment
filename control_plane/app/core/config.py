@@ -6,7 +6,20 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = "sqlite+aiosqlite:///./control_plane.db"
     REDIS_URL: str | None = None
+    internal_service_token: str = "dev-internal-service-token"
+    apps_base_domain: str = "apps.example.com"
+    route_cache_ttl_seconds: int = 30
+    celery_broker_url: str = "sqla+sqlite:///./celery-broker.sqlite"
+    celery_result_backend: str = "db+sqlite:///./celery-results.sqlite"
+    celery_task_always_eager: bool = False
+    celery_task_eager_propagates: bool = True
+    fake_builder_queue_name: str = "fake-builder"
+    fake_builder_service_name: str = "fake-builder"
+    fake_builder_artifact_bucket: str = "fake-static-artifacts"
+    fake_builder_base_url: str = "http://localhost:8000"
 
+    log_level: str = "INFO"
+    logger_name: str = "CONTROL_PLANE"
     # JWT
     jwt_secret: str = "change-me-in-production-use-a-long-random-secret"
     jwt_algorithm: str = "HS256"
