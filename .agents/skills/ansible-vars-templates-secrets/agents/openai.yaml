@@ -1,0 +1,7 @@
+interface:
+  display_name: "Ansible Config Vars"
+  short_description: "Manage vars and templates"
+  default_prompt: "Use $ansible-vars-templates-secrets to add a safe Ansible config or secret-backed template value."
+
+policy:
+  allow_implicit_invocation: true

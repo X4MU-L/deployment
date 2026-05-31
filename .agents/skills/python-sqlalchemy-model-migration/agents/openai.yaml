@@ -1,0 +1,7 @@
+interface:
+  display_name: "SQLAlchemy Migration"
+  short_description: "Add models and migrations"
+  default_prompt: "Use $python-sqlalchemy-model-migration to add or change a SQLAlchemy model and Alembic migration."
+
+policy:
+  allow_implicit_invocation: true

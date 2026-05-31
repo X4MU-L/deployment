@@ -1,0 +1,7 @@
+interface:
+  display_name: "Go CLI Command"
+  short_description: "Add typed CLI commands"
+  default_prompt: "Use $go-cli-command-slice to add a parsed, testable Go CLI command."
+
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Go HTTP Feature"
+  short_description: "Build composable HTTP handlers"
+  default_prompt: "Use $go-composition-http-feature to add a Go HTTP handler with service composition and tests."
+
+policy:
+  allow_implicit_invocation: true

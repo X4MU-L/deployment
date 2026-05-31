@@ -1,0 +1,7 @@
+interface:
+  display_name: "FastAPI DI Endpoint"
+  short_description: "Wire endpoints and dependencies"
+  default_prompt: "Use $python-fastapi-di-endpoint to expose an existing service through a FastAPI route."
+
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Contract Change"
+  short_description: "Coordinate service contracts"
+  default_prompt: "Use $cross-process-contract-change to update a contract across multiple services or processes."
+
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Go Concurrent Registry"
+  short_description: "Build safe runtime registries"
+  default_prompt: "Use $go-concurrent-registry to implement a thread-safe in-memory registry."
+
+policy:
+  allow_implicit_invocation: true

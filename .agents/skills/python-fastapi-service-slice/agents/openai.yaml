@@ -1,0 +1,7 @@
+interface:
+  display_name: "FastAPI Service Slice"
+  short_description: "Add layered FastAPI features"
+  default_prompt: "Use $python-fastapi-service-slice to add a complete service-oriented feature to this FastAPI app."
+
+policy:
+  allow_implicit_invocation: true

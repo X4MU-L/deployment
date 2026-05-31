@@ -1,0 +1,7 @@
+interface:
+  display_name: "Go HTTP Client"
+  short_description: "Add typed service clients"
+  default_prompt: "Use $go-http-client-adapter to create a typed Go HTTP client for another service."
+
+policy:
+  allow_implicit_invocation: true

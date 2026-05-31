@@ -1,0 +1,7 @@
+interface:
+  display_name: "Ansible Systemd Role"
+  short_description: "Deploy apps as services"
+  default_prompt: "Use $ansible-systemd-service-role to create or update an Ansible role for a systemd service."
+
+policy:
+  allow_implicit_invocation: true

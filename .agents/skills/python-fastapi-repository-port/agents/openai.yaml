@@ -1,0 +1,7 @@
+interface:
+  display_name: "Python Repository Port"
+  short_description: "Add persistence boundaries"
+  default_prompt: "Use $python-fastapi-repository-port to introduce a repository interface and SQL adapter for this service."
+
+policy:
+  allow_implicit_invocation: true
