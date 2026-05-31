@@ -9,7 +9,7 @@ from app.github.webhooks import verify_github_signature
 
 def test_verify_signature_valid():
     secret = "secret123"
-    payload = b{"foo": "bar"}
+    payload = b'{"foo": "bar"}'
     mac = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
     header = f"sha256={mac}"
     assert verify_github_signature(secret, payload, header)
@@ -17,7 +17,7 @@ def test_verify_signature_valid():
 
 def test_verify_signature_invalid():
     secret = "secret123"
-    payload = b{"foo": "bar"}
+    payload = b'{"foo": "bar"}'
     header = "sha256=deadbeef"
     assert not verify_github_signature(secret, payload, header)
 
@@ -34,6 +34,7 @@ async def test_webhook_push_creates_build(db_session, client):
     await db_session.flush()
 
     conn = GithubConnection(
+        user_id=user.user_id,
         account_id="acct1",
         account_login="acct",
         installation_id="12345",

@@ -9,6 +9,7 @@ from app.github.schemas import GithubRepositoryRef
 class ProjectCreate(BaseModel):
     name: str
     repo_url: str
+    default_branch: str | None = None
     runtime_type: str = "static"
     source_provider: str = "github"
     github_connection_id: str | None = None
@@ -19,6 +20,7 @@ class ProjectCreate(BaseModel):
 class ProjectUpdate(BaseModel):
     name: str | None = None
     repo_url: str | None = None
+    default_branch: str | None = None
     runtime_type: str | None = None
     source_provider: str | None = None
     github_connection_id: str | None = None
@@ -30,6 +32,7 @@ class ProjectResponse(BaseModel):
     id: str
     name: str
     repo_url: str
+    default_branch: str | None = None
     runtime_type: str
     source_provider: str = "github"
     github_connection_id: str | None = None

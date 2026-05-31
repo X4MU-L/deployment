@@ -33,8 +33,8 @@ class _FakeAsyncClient:
 
 
 @pytest.mark.asyncio
-async def test_list_github_repos_uses_github_app_token(monkeypatch, client):
-    create = await client.post(
+async def test_list_github_repos_uses_github_app_token(monkeypatch, auth_client):
+    create = await auth_client.post(
         "/api/v1/github/connections",
         json={
             "account_id": "acct_1",
@@ -84,7 +84,7 @@ async def test_list_github_repos_uses_github_app_token(monkeypatch, client):
         ),
     )
 
-    resp = await client.get(
+    resp = await auth_client.get(
         f"/api/v1/github/connections/{connection_id}/repos", params={"search": "web"}
     )
     assert resp.status_code == 200

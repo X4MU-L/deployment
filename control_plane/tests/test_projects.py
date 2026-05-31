@@ -18,6 +18,7 @@ async def test_create_project(auth_client):
     body = resp.json()
     assert body["name"] == "my-app"
     assert body["repo_url"] == "https://github.com/example/my-app"
+    assert body["default_branch"] == "main"
     assert "id" in body
 
 
@@ -55,6 +56,9 @@ async def test_get_project(auth_client):
     resp = await auth_client.get(f"/api/v1/projects/{project_id}")
     assert resp.status_code == 200
     assert resp.json()["name"] == "get-test"
+    envs = await auth_client.get(f"/api/v1/projects/{project_id}/environments")
+    assert envs.status_code == 200
+    assert [env["name"] for env in envs.json()] == ["production"]
 
 
 @pytest.mark.asyncio
@@ -91,6 +95,7 @@ async def test_create_project_with_github_import_metadata(auth_client, db_sessio
     payload = {
         "name": "imported-app",
         "repo_url": "https://github.com/acme/imported-app",
+        "default_branch": "main",
         "source_provider": "github",
         "github_connection_id": "conn_123",
         "source_repository": {
@@ -116,6 +121,7 @@ async def test_create_project_with_github_import_metadata(auth_client, db_sessio
     assert resp.status_code == 201
     body = resp.json()
     assert body["source_provider"] == "github"
+    assert body["default_branch"] == "main"
     assert body["github_connection_id"] == "conn_123"
     assert body["source_repository"]["full_name"] == "acme/imported-app"
     assert body["build_settings"]["build_command"] == "pnpm build"
@@ -124,3 +130,16 @@ async def test_create_project_with_github_import_metadata(auth_client, db_sessio
     project = row.scalar_one()
     assert project.source_repository["repository_id"] == "repo_123"
     assert project.build_settings["framework_preset"] == "nextjs"
+
+
+@pytest.mark.asyncio
+async def test_create_project_rejects_unsupported_manual_repo_url(auth_client):
+    resp = await auth_client.post(
+        "/api/v1/projects/",
+        json={
+            "name": "bad-repo",
+            "repo_url": "git@github.com:example/private.git",
+        },
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "UNSUPPORTED_REPO_URL"

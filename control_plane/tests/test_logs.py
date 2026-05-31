@@ -9,9 +9,16 @@ async def _create_project_and_build(auth_client) -> tuple[str, str]:
     assert project.status_code == 201
     project_id = project.json()["id"]
 
-    build = await auth_client.post("/api/v1/builds/", json={"project_id": project_id})
+    build = await auth_client.post(f"/api/v1/projects/{project_id}/builds", json={})
     assert build.status_code == 201
     return project_id, build.json()["id"]
+
+
+def _service_headers() -> dict[str, str]:
+    return {
+        "Authorization": "Bearer dev-internal-service-token",
+        "X-Service-Name": "builder",
+    }
 
 
 @pytest.mark.asyncio
@@ -19,15 +26,17 @@ async def test_build_log_ingest_allocates_monotonic_sequences(auth_client):
     _, build_id = await _create_project_and_build(auth_client)
 
     first = await auth_client.post(
-        f"/api/v1/builds/{build_id}/logs",
+        f"/api/v1/internal/builds/{build_id}/logs",
         json={"stream": "stdout", "lines": ["line 1", "line 2"]},
+        headers=_service_headers(),
     )
     assert first.status_code == 201
     assert [line["seq"] for line in first.json()] == [0, 1]
 
     second = await auth_client.post(
-        f"/api/v1/builds/{build_id}/logs",
+        f"/api/v1/internal/builds/{build_id}/logs",
         json={"stream": "stdout", "lines": ["line 3"]},
+        headers=_service_headers(),
     )
     assert second.status_code == 201
     assert [line["seq"] for line in second.json()] == [2]
@@ -44,14 +53,16 @@ async def test_build_log_ingest_is_idempotent_for_retried_chunk(auth_client):
     _, build_id = await _create_project_and_build(auth_client)
 
     first = await auth_client.post(
-        f"/api/v1/builds/{build_id}/logs",
+        f"/api/v1/internal/builds/{build_id}/logs",
         json={"stream": "stdout", "lines": ["same 1", "same 2"], "start_seq": 0},
+        headers=_service_headers(),
     )
     assert first.status_code == 201
 
     retry = await auth_client.post(
-        f"/api/v1/builds/{build_id}/logs",
+        f"/api/v1/internal/builds/{build_id}/logs",
         json={"stream": "stdout", "lines": ["same 1", "same 2"], "start_seq": 0},
+        headers=_service_headers(),
     )
     assert retry.status_code == 201
     assert [line["id"] for line in retry.json()] == [line["id"] for line in first.json()]
@@ -66,14 +77,16 @@ async def test_build_log_ingest_rejects_conflicting_retry(auth_client):
     _, build_id = await _create_project_and_build(auth_client)
 
     first = await auth_client.post(
-        f"/api/v1/builds/{build_id}/logs",
+        f"/api/v1/internal/builds/{build_id}/logs",
         json={"stream": "stdout", "lines": ["line 1"], "start_seq": 0},
+        headers=_service_headers(),
     )
     assert first.status_code == 201
 
     conflict = await auth_client.post(
-        f"/api/v1/builds/{build_id}/logs",
+        f"/api/v1/internal/builds/{build_id}/logs",
         json={"stream": "stdout", "lines": ["different line 1"], "start_seq": 0},
+        headers=_service_headers(),
     )
     assert conflict.status_code == 409
     assert conflict.json()["detail"]["code"] == "LOG_SEQUENCE_CONFLICT"
@@ -92,20 +105,11 @@ async def test_build_logs_stream_rejects_invalid_last_event_id(auth_client):
 
 
 @pytest.mark.asyncio
-async def test_build_status_endpoint_transitions_build(auth_client):
+async def test_internal_logs_require_service_token(auth_client):
     _, build_id = await _create_project_and_build(auth_client)
 
-    running = await auth_client.post(
-        f"/api/v1/builds/{build_id}/status",
-        json={"status": "running"},
+    denied = await auth_client.post(
+        f"/api/v1/internal/builds/{build_id}/logs",
+        json={"stream": "stdout", "lines": ["nope"]},
     )
-    assert running.status_code == 200
-    assert running.json()["status"] == "running"
-
-    succeeded = await auth_client.post(
-        f"/api/v1/builds/{build_id}/status",
-        json={"status": "succeeded", "artifact_ref": "r2://artifacts/projects/p/releases/r"},
-    )
-    assert succeeded.status_code == 200
-    assert succeeded.json()["status"] == "succeeded"
-    assert succeeded.json()["artifact_ref"] == "r2://artifacts/projects/p/releases/r"
+    assert denied.status_code == 401

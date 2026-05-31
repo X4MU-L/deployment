@@ -13,6 +13,9 @@ class ProjectRepository(ABC):
     async def get_by_id(self, project_id: str) -> Project | None: ...
 
     @abstractmethod
+    async def get_by_id_for_user(self, project_id: str, user_id: str) -> Project | None: ...
+
+    @abstractmethod
     async def list_by_user(self, user_id: str) -> list[Project]: ...
 
     @abstractmethod
@@ -21,6 +24,7 @@ class ProjectRepository(ABC):
         user_id: str,
         name: str,
         repo_url: str,
+        default_branch: str | None,
         runtime_type: str,
         source_provider: str = "github",
         github_connection_id: str | None = None,
@@ -50,6 +54,12 @@ class SqlAlchemyProjectRepository(ProjectRepository):
     async def get_by_id(self, project_id: str) -> Project | None:
         return await self._db.get(Project, project_id)
 
+    async def get_by_id_for_user(self, project_id: str, user_id: str) -> Project | None:
+        result = await self._db.execute(
+            select(Project).where(Project.id == project_id, Project.user_id == user_id)
+        )
+        return result.scalar_one_or_none()
+
     async def list_by_user(self, user_id: str) -> list[Project]:
         result = await self._db.execute(
             select(Project).where(Project.user_id == user_id).order_by(Project.created_at)
@@ -61,6 +71,7 @@ class SqlAlchemyProjectRepository(ProjectRepository):
         user_id: str,
         name: str,
         repo_url: str,
+        default_branch: str | None,
         runtime_type: str,
         source_provider: str = "github",
         github_connection_id: str | None = None,
@@ -71,6 +82,7 @@ class SqlAlchemyProjectRepository(ProjectRepository):
             user_id=user_id,
             name=name,
             repo_url=repo_url,
+            default_branch=default_branch,
             runtime_type=runtime_type,
             source_provider=source_provider,
             github_connection_id=github_connection_id,
