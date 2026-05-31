@@ -26,6 +26,7 @@ class GithubConnectionCreate(BaseModel):
 
 class GithubConnectionResponse(BaseModel):
     id: str
+    user_id: str | None = None
     account_id: str
     account_login: str
     account_name: str | None = None

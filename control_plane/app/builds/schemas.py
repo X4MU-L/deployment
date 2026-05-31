@@ -1,10 +1,14 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
 
 class BuildCreate(BaseModel):
     project_id: str
+    environment_id: str | None = None
+    triggered_by_user_id: str | None = None
+    trigger_source: str = "system"
     correlation_id: str | None = None  # auto-generated if omitted
     job_type: str = "build"
     source_ref: str | None = None
@@ -29,6 +33,9 @@ class BuildStatusUpdate(BaseModel):
 class BuildResponse(BaseModel):
     id: str
     project_id: str
+    environment_id: str | None = None
+    triggered_by_user_id: str | None = None
+    trigger_source: str
     correlation_id: str
     attempt: int
     job_type: str
@@ -38,6 +45,7 @@ class BuildResponse(BaseModel):
     source_snapshot: dict | None = None
     build_config: dict | None = None
     env_snapshot: dict | None = None
+    queue_job_id: str | None = None
     artifact_ref: str | None
     error_message: str | None
     created_at: datetime
@@ -53,3 +61,16 @@ class BuildSettings(BaseModel):
     output_directory: str | None = None
     framework_preset: str | None = None
     package_manager: str | None = None
+
+
+class BuildTriggerRequest(BaseModel):
+    environment_name: str = "production"
+    source_ref: str | None = None
+    commit_sha: str | None = None
+
+
+class BuildCompleteRequest(BaseModel):
+    status: Literal["succeeded", "failed", "canceled"]
+    artifact_ref: str | None = None
+    manifest_ref: str | None = None
+    error_message: str | None = None

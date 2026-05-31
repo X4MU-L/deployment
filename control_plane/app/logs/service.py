@@ -72,7 +72,8 @@ class LogService:
                 "deployment_id": line.deployment_id,
                 "seq": line.seq,
                 "stream": line.stream,
-                "content": line.content, "created_at": line.created_at.isoformat(),
+                "content": line.content,
+                "created_at": line.created_at.isoformat(),
             }
             results.append(entry)
             if should_publish:
@@ -95,7 +96,8 @@ class LogService:
                     "deployment_id": line.deployment_id,
                     "seq": line.seq,
                     "stream": line.stream,
-                    "content": line.content, "created_at": line.created_at.isoformat(),
+                    "content": line.content,
+                    "created_at": line.created_at.isoformat(),
                 }
                 highest_seq = max(highest_seq, entry["seq"])
                 yield entry
@@ -112,14 +114,15 @@ class LogService:
         lines = await self._repo.get_since(entity_col, entity_id, -1)
         return [
             {
-                "id": l.id,
-                "build_id": l.build_id,
-                "deployment_id": l.deployment_id,
-                "seq": l.seq,
-                "stream": l.stream,
-                "content": l.content, "created_at": l.created_at.isoformat(),
+                "id": line.id,
+                "build_id": line.build_id,
+                "deployment_id": line.deployment_id,
+                "seq": line.seq,
+                "stream": line.stream,
+                "content": line.content,
+                "created_at": line.created_at.isoformat(),
             }
-            for l in lines
+            for line in lines
         ]
 
 

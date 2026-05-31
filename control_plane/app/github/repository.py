@@ -15,10 +15,16 @@ class GithubConnectionRepository(ABC):
     async def get_by_id(self, conn_id: str) -> GithubConnection | None: ...
 
     @abstractmethod
+    async def get_by_id_for_user(self, conn_id: str, user_id: str) -> GithubConnection | None: ...
+
+    @abstractmethod
     async def get_by_installation_id(self, installation_id: str) -> GithubConnection | None: ...
 
     @abstractmethod
     async def list_all(self) -> list[GithubConnection]: ...
+
+    @abstractmethod
+    async def list_by_user(self, user_id: str) -> list[GithubConnection]: ...
 
     @abstractmethod
     async def delete(self, conn_id: str) -> None: ...
@@ -38,6 +44,14 @@ class SqlAlchemyGithubConnectionRepository(GithubConnectionRepository):
     async def get_by_id(self, conn_id: str) -> GithubConnection | None:
         return await self._db.get(GithubConnection, conn_id)
 
+    async def get_by_id_for_user(self, conn_id: str, user_id: str) -> GithubConnection | None:
+        result = await self._db.execute(
+            select(GithubConnection).where(
+                GithubConnection.id == conn_id, GithubConnection.user_id == user_id
+            )
+        )
+        return result.scalars().first()
+
     async def get_by_installation_id(self, installation_id: str) -> GithubConnection | None:
         result = await self._db.execute(
             select(GithubConnection).where(GithubConnection.installation_id == str(installation_id))
@@ -47,6 +61,14 @@ class SqlAlchemyGithubConnectionRepository(GithubConnectionRepository):
     async def list_all(self) -> list[GithubConnection]:
         result = await self._db.execute(
             select(GithubConnection).order_by(GithubConnection.created_at)
+        )
+        return list(result.scalars().all())
+
+    async def list_by_user(self, user_id: str) -> list[GithubConnection]:
+        result = await self._db.execute(
+            select(GithubConnection)
+            .where(GithubConnection.user_id == user_id)
+            .order_by(GithubConnection.created_at)
         )
         return list(result.scalars().all())
 

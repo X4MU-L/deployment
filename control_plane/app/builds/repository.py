@@ -7,10 +7,15 @@ from app.db.models.build import Build
 
 class BuildRepository:
     async def get_by_id(self, build_id: str) -> Build | None: ...
+    async def get_by_id_for_user(self, build_id: str, user_id: str) -> Build | None: ...
     async def list_by_project(self, project_id: str) -> list[Build]: ...
+    async def list_by_project_for_user(self, project_id: str, user_id: str) -> list[Build]: ...
     async def create(
         self,
         project_id: str,
+        environment_id: str | None,
+        triggered_by_user_id: str | None,
+        trigger_source: str,
         correlation_id: str,
         attempt: int,
         job_type: str,
@@ -33,15 +38,39 @@ class SqlAlchemyBuildRepository(BuildRepository):
     async def get_by_id(self, build_id: str) -> Build | None:
         return await self._db.get(Build, build_id)
 
+    async def get_by_id_for_user(self, build_id: str, user_id: str) -> Build | None:
+        from app.db.models.project import Project
+
+        result = await self._db.execute(
+            select(Build)
+            .join(Project, Project.id == Build.project_id)
+            .where(Build.id == build_id, Project.user_id == user_id)
+        )
+        return result.scalar_one_or_none()
+
     async def list_by_project(self, project_id: str) -> list[Build]:
         result = await self._db.execute(
             select(Build).where(Build.project_id == project_id).order_by(Build.created_at.desc())
         )
         return list(result.scalars().all())
 
+    async def list_by_project_for_user(self, project_id: str, user_id: str) -> list[Build]:
+        from app.db.models.project import Project
+
+        result = await self._db.execute(
+            select(Build)
+            .join(Project, Project.id == Build.project_id)
+            .where(Build.project_id == project_id, Project.user_id == user_id)
+            .order_by(Build.created_at.desc())
+        )
+        return list(result.scalars().all())
+
     async def create(
         self,
         project_id: str,
+        environment_id: str | None,
+        triggered_by_user_id: str | None,
+        trigger_source: str,
         correlation_id: str,
         attempt: int,
         job_type: str,
@@ -53,6 +82,9 @@ class SqlAlchemyBuildRepository(BuildRepository):
     ) -> Build:
         build = Build(
             project_id=project_id,
+            environment_id=environment_id,
+            triggered_by_user_id=triggered_by_user_id,
+            trigger_source=trigger_source,
             correlation_id=correlation_id,
             attempt=attempt,
             job_type=job_type,
