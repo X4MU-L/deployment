@@ -6,6 +6,8 @@ from fastapi import Depends, Header, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.artifact_store.base import ArtifactStore
+from app.artifact_store.factory import build_artifact_store
 from app.audit.repository import AuditRepository, SqlAlchemyAuditRepository
 from app.audit.service import AuditService
 from app.auth.social_service import SocialOAuthService
@@ -118,6 +120,10 @@ def _background_builder() -> BackgroundBuilder:
     return build_background_builder(get_settings())
 
 
+def _artifact_store() -> ArtifactStore:
+    return build_artifact_store(get_settings())
+
+
 def _deployment_service(repo: DeploymentRepoDep) -> DeploymentService:
     return DeploymentService(repo)
 
@@ -127,7 +133,7 @@ def _environment_service(repo: EnvironmentRepoDep) -> EnvironmentService:
 
 
 def _release_service(db: DbSession) -> ReleaseService:
-    return ReleaseService(_release_repo(db), _audit_service(_audit_repo(db)))
+    return ReleaseService(_release_repo(db), _audit_service(_audit_repo(db)), _artifact_store())
 
 
 def _log_service(repo: LogRepoDep) -> LogService:

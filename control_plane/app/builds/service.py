@@ -1,5 +1,5 @@
 from app.audit.service import AuditService
-from app.background_builder.base import BackgroundBuilder
+from app.background_builder.base import BackgroundBuilder, BackgroundBuildRequest
 from app.builds.repository import BuildRepository
 from app.builds.schemas import BuildCreate, BuildTransition, BuildTriggerRequest
 from app.core.exceptions import InvalidTransitionError, NotFoundError, ServiceUnavailableError
@@ -50,6 +50,7 @@ class BuildService:
             source_snapshot=data.source_snapshot,
             build_config=data.build_config,
             env_snapshot=data.env_snapshot,
+            planned_release_id=data.planned_release_id or _new_release_id(),
         )
         return self._to_dict(build)
 
@@ -95,8 +96,25 @@ class BuildService:
         )
         adapter_name = self._background_builder.adapter_name
         try:
-            dispatch = self._background_builder.enqueue_build(build["id"])
+            dispatch = self._background_builder.enqueue_build(
+                BackgroundBuildRequest(
+                    build_id=build["id"],
+                    project_id=build["project_id"],
+                    environment_id=build["environment_id"],
+                    correlation_id=build["correlation_id"],
+                    attempt=build["attempt"],
+                    source_ref=build["source_ref"],
+                    commit_sha=build["commit_sha"],
+                    source_snapshot=build["source_snapshot"],
+                    build_config=build["build_config"],
+                    env_snapshot=build["env_snapshot"],
+                    planned_release_id=build["planned_release_id"],
+                )
+            )
         except Exception as exc:
+            # TODO: find a way to make this into a compensating transaction that can be retried,
+            # perhaps have a markfailed_build that uses both the create atransaction
+            # and the audit log and build update
             await self._repo.update(
                 build["id"],
                 builder_adapter=adapter_name,
@@ -116,6 +134,9 @@ class BuildService:
                 code="BUILD_DISPATCH_FAILED",
             ) from exc
 
+        # TODO: find a way to make this into a compensating transaction that can be retried,
+        # perhaps have a markqueued_build that uses both the create atransaction
+        # and the audit log and build update
         updated = await self._repo.update(
             build["id"],
             builder_adapter=dispatch.adapter,
@@ -186,6 +207,7 @@ class BuildService:
             "source_snapshot": getattr(b, "source_snapshot", None),
             "build_config": getattr(b, "build_config", None),
             "env_snapshot": getattr(b, "env_snapshot", None),
+            "planned_release_id": getattr(b, "planned_release_id", None),
             "builder_adapter": getattr(b, "builder_adapter", None),
             "queue_job_id": getattr(b, "queue_job_id", None),
             "artifact_ref": b.artifact_ref,
@@ -196,6 +218,12 @@ class BuildService:
 
 
 def _new_correlation_id() -> str:
+    from uuid import uuid4
+
+    return str(uuid4())
+
+
+def _new_release_id() -> str:
     from uuid import uuid4
 
     return str(uuid4())

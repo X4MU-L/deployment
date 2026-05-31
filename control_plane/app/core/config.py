@@ -18,6 +18,22 @@ class Settings(BaseSettings):
     celery_builder_service_name: str = "fake-builder"
     celery_builder_artifact_bucket: str = "fake-static-artifacts"
     celery_builder_base_url: str = "http://localhost:8000"
+    artifact_store_provider: str = "local"
+    artifact_store_root: str = "./.artifacts"
+    r2_endpoint_url: str = ""
+    r2_access_key_id: str = ""
+    r2_secret_access_key: str = ""
+    r2_session_token: str | None = None
+    r2_region_name: str = "auto"
+    cloudflare_api_base_url: str = "https://api.cloudflare.com/client/v4"
+    cloudflare_account_id: str = ""
+    cloudflare_api_token: str = ""
+    cloudflare_queue_name: str = "build-requested"
+    cloudflare_queue_id: str = ""
+    cloudflare_pull_batch_size: int = 5
+    cloudflare_pull_visibility_timeout_ms: int = 30000
+    cloudflare_pull_poll_interval_seconds: int = 5
+    cloudflare_artifact_bucket: str = "static-artifacts"
 
     log_level: str = "INFO"
     logger_name: str = "CONTROL_PLANE"

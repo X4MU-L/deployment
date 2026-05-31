@@ -16,6 +16,7 @@ class BuildCreate(BaseModel):
     source_snapshot: dict | None = None
     build_config: dict | None = None
     env_snapshot: dict | None = None
+    planned_release_id: str | None = None
 
 
 class BuildTransition(BaseModel):
@@ -45,6 +46,7 @@ class BuildResponse(BaseModel):
     source_snapshot: dict | None = None
     build_config: dict | None = None
     env_snapshot: dict | None = None
+    planned_release_id: str | None = None
     builder_adapter: str | None = None
     queue_job_id: str | None = None  # adapter-specific async job reference
     artifact_ref: str | None

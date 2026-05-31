@@ -24,6 +24,7 @@ class BuildRepository:
         source_snapshot: dict | None = None,
         build_config: dict | None = None,
         env_snapshot: dict | None = None,
+        planned_release_id: str | None = None,
     ) -> Build: ...
     async def update(self, build_id: str, **fields) -> Build: ...
 
@@ -79,6 +80,7 @@ class SqlAlchemyBuildRepository(BuildRepository):
         source_snapshot: dict | None = None,
         build_config: dict | None = None,
         env_snapshot: dict | None = None,
+        planned_release_id: str | None = None,
     ) -> Build:
         build = Build(
             project_id=project_id,
@@ -93,6 +95,7 @@ class SqlAlchemyBuildRepository(BuildRepository):
             source_snapshot=source_snapshot,
             build_config=build_config,
             env_snapshot=env_snapshot,
+            planned_release_id=planned_release_id,
         )
         self._db.add(build)
         await self._db.flush()

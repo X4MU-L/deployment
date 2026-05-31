@@ -30,6 +30,7 @@ class Build(Base, BaseMixin):
     source_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     build_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     env_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    planned_release_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     builder_adapter: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     queue_job_id: Mapped[str | None] = mapped_column(
         String(255), nullable=True, index=True
