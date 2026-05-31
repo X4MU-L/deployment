@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     client_base_url: str = "http://localhost:3000"
     github_client_id: str = ""
     github_client_secret: str = ""
+    github_webhook_secret: str = "change-me-in-production-use-a-long-random-secret"
     github_app_id: str = ""
     github_app_private_key_path: str = ""
     google_client_id: str = ""
