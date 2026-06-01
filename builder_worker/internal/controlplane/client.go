@@ -80,6 +80,12 @@ func (c *Client) ClaimBuild(ctx context.Context, buildID string, request BuildCl
 	return response, err
 }
 
+func (c *Client) RenewBuildClaim(ctx context.Context, buildID string, request BuildClaimRequest) (BuildClaimResponse, error) {
+	var response BuildClaimResponse
+	err := c.doJSON(ctx, http.MethodPost, fmt.Sprintf("/api/v1/internal/builds/%s/claim/renew", buildID), request, &response)
+	return response, err
+}
+
 func (c *Client) UpdateBuildStatus(ctx context.Context, buildID string, request BuildStatusUpdateRequest) error {
 	return c.doJSON(ctx, http.MethodPost, fmt.Sprintf("/api/v1/internal/builds/%s/status", buildID), request, nil)
 }

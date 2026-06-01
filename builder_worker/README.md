@@ -5,9 +5,12 @@ This service is the intended home of the external build-plane consumer.
 It is a standalone Go worker that:
 
 - pulls `build.requested.v1` from Cloudflare Queues over HTTP
+- dispatches pulled jobs through a bounded-concurrency build hub
 - classifies malformed versus retryable failures
 - acks or retries queue messages explicitly
 - exposes a handler boundary for build execution against the control plane
+- renews active build claims during long-running builds so queue redelivery does not become duplicate execution
+- emits structured lifecycle events on a dedicated `system` log stream with build and correlation context
 
 ## Status
 
@@ -57,7 +60,7 @@ Current limitation:
 - `internal/queue/`
   - Cloudflare Queues HTTP pull/ack client
 - `internal/consumer/`
-  - poll loop and retry classification
+  - poll loop, bounded job dispatch, and retry classification
 - `internal/artifacts/`
   - artifact publisher interface plus local and R2 adapters
 - `internal/handler/`
@@ -75,9 +78,13 @@ Current limitation:
 - `CP_CLOUDFLARE_PULL_VISIBILITY_TIMEOUT_MS`
 - `CP_CLOUDFLARE_PULL_POLL_INTERVAL_SECONDS`
 - `CP_CLOUDFLARE_PULL_MAX_ATTEMPTS`
+- `CP_CLOUDFLARE_PULL_MAX_CONCURRENT_BUILDS`
 - `CP_CELERY_BUILDER_BASE_URL`
 - `CP_INTERNAL_SERVICE_TOKEN`
 - `CP_CELERY_BUILDER_SERVICE_NAME`
+- `CP_BUILD_CLAIM_LEASE_SECONDS`
+- `CP_BUILD_CLAIM_RENEW_INTERVAL_SECONDS`
+- `CP_BUILD_MAX_DURATION_SECONDS`
 - `CP_BUILD_EXECUTOR_PROVIDER`
 - `CP_SOURCE_FETCHER_PROVIDER`
 - `CP_FETCH_DOCKER_IMAGE`
@@ -108,3 +115,30 @@ execution in the factory path. The next step is to harden that runtime further
 with tighter image policy, stronger duplicate-claim protection, and continued
 workspace hygiene while keeping the queue client, handler, and log-forwarding
 contracts stable.
+
+The pull consumer now keeps a bounded in-flight job hub per worker process.
+When there is spare capacity it can keep pulling additional queue work even
+while earlier builds are still running, but queue messages are still only acked
+or retried after the corresponding build result is known.
+
+Active builds now also renew their control-plane claim on a fixed heartbeat
+interval. That keeps long-running builds from losing ownership while they are
+still executing, and lets the worker cancel a build if renewal fails or the
+claim is no longer owned.
+
+The worker now also emits structured lifecycle log entries for claim/start/
+renew/finish phases on a dedicated `system` stream. Those events include the
+build id, release id, attempt, service name, and correlation id so one build
+can be traced across queue handoff, execution, and completion without relying
+only on raw command output.
+
+The Cloudflare queue visibility timeout should be at least as long as the
+control-plane claim lease. The worker now defaults that timeout from
+`CP_BUILD_CLAIM_LEASE_SECONDS` and rejects shorter values so long-running
+builds are not redelivered after only a few seconds while the original worker
+still legitimately owns the build.
+
+The worker also enforces a maximum build duration that must stay below the
+claim lease. That gives the current pull-queue model a hard upper bound for
+one build’s execution time, so a stuck build is canceled before it can drift
+past the queue/claim safety window.

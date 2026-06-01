@@ -57,6 +57,9 @@ func main() {
 		ControlPlaneBaseURL:   cfg.ControlPlaneBaseURL,
 		ServiceToken:          cfg.InternalServiceToken,
 		ServiceName:           cfg.ServiceName,
+		ClaimLeaseSeconds:     cfg.BuildClaimLeaseSeconds,
+		ClaimRenewInterval:    cfg.BuildClaimRenewInterval,
+		BuildMaxDuration:      cfg.BuildMaxDuration,
 		BuildExecutorProvider: cfg.BuildExecutorProvider,
 		SourceFetcherProvider: cfg.SourceFetcherProvider,
 		FetchDockerImage:      cfg.FetchDockerImage,
@@ -87,11 +90,9 @@ func main() {
 	}
 
 	// Initialize and start the consumer loop
-	// The consumer is responsible for continuously polling the queue for new build messages, and invoking the build handler for each message.
-	// The consumer handles batching, visibility timeouts, and retry attempts for messages pulled from the queue, but relies on the build handler to do the actual processing of each message.
-	// The consumer will pull messages in batches, and for each batch, it will call the Handle method on the build handler for each message.
-	// If the Handle method returns an error, the consumer will not delete the message from the queue, allowing it to be retried after the visibility timeout expires.
-	// If the Handle method succeeds, the consumer will delete the message from the queue, preventing it from being retried.
+	// The consumer continuously polls the queue for new build messages and hands each pulled batch to a bounded-concurrency job hub.
+	// That hub invokes the build handler in parallel up to the configured limit, while the consumer still owns the final ack/retry decision for each lease.
+	// This keeps queue outcome coupled to actual build completion instead of fire-and-forget dispatch, but avoids serializing an entire batch behind one long-running build.
 	pullConsumer := consumer.New(consumer.Config{
 		BatchSize:           cfg.PullBatchSize,
 		VisibilityTimeoutMS: cfg.PullVisibilityTimeoutMS,

@@ -2,7 +2,10 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"time"
 
 	"builder_worker/internal/artifacts"
 	"builder_worker/internal/contracts"
@@ -11,17 +14,26 @@ import (
 )
 
 const defaultBuildClaimLeaseSeconds = 900
+const defaultBuildClaimRenewInterval = 5 * time.Minute
+const defaultBuildMaxDuration = 14 * time.Minute
 
 type BuildHandler struct {
 	controlPlaneClient ControlPlaneClient
 	executor           executor.BuildExecutor
 	logForwarder       BuildLogForwarder
+	serviceName        string
+	claimLeaseSeconds  int
+	claimRenewInterval time.Duration
+	buildMaxDuration   time.Duration
 }
 
 type BuildHandlerConfig struct {
 	ControlPlaneBaseURL   string
 	ServiceToken          string
 	ServiceName           string
+	ClaimLeaseSeconds     int
+	ClaimRenewInterval    time.Duration
+	BuildMaxDuration      time.Duration
 	BuildExecutorProvider string
 	SourceFetcherProvider string
 	FetchDockerImage      string
@@ -99,6 +111,10 @@ func NewBuildHandler(config BuildHandlerConfig) (*BuildHandler, error) {
 		controlPlaneClient: controlPlaneClient,
 		executor:           buildExecutor,
 		logForwarder:       NewControlPlaneLogForwarder(controlPlaneClient),
+		serviceName:        config.ServiceName,
+		claimLeaseSeconds:  coalesceClaimLeaseSeconds(config.ClaimLeaseSeconds),
+		claimRenewInterval: coalesceClaimRenewInterval(config.ClaimRenewInterval),
+		buildMaxDuration:   coalesceBuildMaxDuration(config.BuildMaxDuration),
 	}, nil
 }
 
@@ -109,12 +125,16 @@ func NewBuildHandlerWithDeps(controlPlaneClient ControlPlaneClient, buildExecuto
 		controlPlaneClient: controlPlaneClient,
 		executor:           buildExecutor,
 		logForwarder:       logForwarder,
+		serviceName:        "builder-worker",
+		claimLeaseSeconds:  defaultBuildClaimLeaseSeconds,
+		claimRenewInterval: defaultBuildClaimRenewInterval,
+		buildMaxDuration:   defaultBuildMaxDuration,
 	}
 }
 
 func (h *BuildHandler) Handle(ctx context.Context, message contracts.BuildRequestedMessage) error {
 	claim, err := h.controlPlaneClient.ClaimBuild(ctx, message.BuildID, controlplane.BuildClaimRequest{
-		LeaseSeconds: defaultBuildClaimLeaseSeconds,
+		LeaseSeconds: h.claimLeaseSeconds,
 	})
 	if err != nil {
 		return err
@@ -128,23 +148,68 @@ func (h *BuildHandler) Handle(ctx context.Context, message contracts.BuildReques
 	}
 	build := claim.Build
 
+	logCtx, stopLogs := context.WithCancel(ctx)
+	defer stopLogs()
+
 	logMessages := make(chan executor.BuildLogMessage, 16)
 	forwardErrCh := make(chan error, 1)
 	go func() {
-		forwardErrCh <- h.logForwarder.Forward(ctx, message.BuildID, logMessages)
+		forwardErrCh <- h.logForwarder.Forward(logCtx, message.BuildID, logMessages)
 	}()
 
-	result, err := h.executor.Execute(ctx, executor.BuildExecutionRequest{
+	if err := h.emitLifecycleLog(logCtx, logMessages, message, "claim.acquired", map[string]any{
+		"lease_seconds": h.claimLeaseSeconds,
+	}); err != nil {
+		close(logMessages)
+		<-forwardErrCh
+		return err
+	}
+	if err := h.emitLifecycleLog(logCtx, logMessages, message, "build.started", map[string]any{
+		"build_max_duration_seconds": int(h.buildMaxDuration / time.Second),
+	}); err != nil {
+		close(logMessages)
+		<-forwardErrCh
+		return err
+	}
+
+	execCtx, cancel := context.WithTimeout(ctx, h.buildMaxDuration)
+	defer cancel()
+
+	renewErrCh := make(chan error, 1)
+	go func() {
+		renewErrCh <- h.renewClaimLoop(execCtx, message, logMessages, cancel)
+	}()
+
+	result, executeErr := h.executor.Execute(execCtx, executor.BuildExecutionRequest{
 		Build:   build,
 		Message: message,
 	}, logMessages)
+	cancel()
+	renewErr := <-renewErrCh
+
+	var lifecycleErr error
+	if executeErr == nil && renewErr == nil {
+		lifecycleErr = h.emitLifecycleLog(logCtx, logMessages, message, classifyResultPhase(result.Status), map[string]any{
+			"status":       result.Status,
+			"artifact_ref": result.ArtifactRef,
+			"manifest_ref": result.ManifestRef,
+			"error":        result.ErrorMessage,
+		})
+	} else {
+		lifecycleErr = h.emitLifecycleLog(logCtx, logMessages, message, classifyFailurePhase(executeErr, renewErr), map[string]any{
+			"error": firstErrorString(prioritizeRenewalError(executeErr, renewErr)),
+		})
+	}
 	close(logMessages)
 	forwardErr := <-forwardErrCh
-	if err != nil {
+	stopLogs()
+
+	if err := joinNonNil(
+		prioritizeRenewalError(executeErr, renewErr),
+		lifecycleErr,
+		forwardErr,
+	); err != nil {
 		return err
-	}
-	if forwardErr != nil {
-		return forwardErr
 	}
 
 	return h.controlPlaneClient.CompleteBuild(ctx, message.BuildID, controlplane.BuildCompleteRequest{
@@ -153,4 +218,164 @@ func (h *BuildHandler) Handle(ctx context.Context, message contracts.BuildReques
 		ManifestRef:  result.ManifestRef,
 		ErrorMessage: result.ErrorMessage,
 	})
+}
+
+func (h *BuildHandler) renewClaimLoop(
+	ctx context.Context,
+	message contracts.BuildRequestedMessage,
+	logSink chan<- executor.BuildLogMessage,
+	cancel context.CancelFunc,
+) error {
+	ticker := time.NewTicker(h.claimRenewInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			response, err := h.controlPlaneClient.RenewBuildClaim(ctx, message.BuildID, controlplane.BuildClaimRequest{
+				LeaseSeconds: h.claimLeaseSeconds,
+			})
+			if err != nil {
+				cancel()
+				return fmt.Errorf("renew build claim: %w", err)
+			}
+			if !response.Claimed {
+				cancel()
+				reason := response.Reason
+				if reason == "" {
+					reason = "not_claimable"
+				}
+				return fmt.Errorf("renew build claim denied for %s: %s", message.BuildID, reason)
+			}
+			if err := h.emitLifecycleLog(ctx, logSink, message, "claim.renewed", map[string]any{
+				"lease_seconds": h.claimLeaseSeconds,
+			}); err != nil {
+				cancel()
+				return err
+			}
+		}
+	}
+}
+
+type lifecycleLogEntry struct {
+	Kind          string         `json:"kind"`
+	Phase         string         `json:"phase"`
+	BuildID       string         `json:"build_id"`
+	ProjectID     string         `json:"project_id"`
+	EnvironmentID string         `json:"environment_id"`
+	ReleaseID     string         `json:"release_id"`
+	CorrelationID string         `json:"correlation_id"`
+	Attempt       int            `json:"attempt"`
+	Service       string         `json:"service"`
+	Fields        map[string]any `json:"fields,omitempty"`
+}
+
+func (h *BuildHandler) emitLifecycleLog(
+	ctx context.Context,
+	logSink chan<- executor.BuildLogMessage,
+	message contracts.BuildRequestedMessage,
+	phase string,
+	fields map[string]any,
+) error {
+	entry := lifecycleLogEntry{
+		Kind:          "lifecycle",
+		Phase:         phase,
+		BuildID:       message.BuildID,
+		ProjectID:     message.ProjectID,
+		EnvironmentID: message.EnvironmentID,
+		ReleaseID:     message.ReleaseID,
+		CorrelationID: message.CorrelationID,
+		Attempt:       message.Attempt,
+		Service:       h.serviceName,
+		Fields:        fields,
+	}
+	encoded, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("marshal lifecycle log: %w", err)
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case logSink <- executor.BuildLogMessage{Stream: "system", Line: string(encoded)}:
+		return nil
+	}
+}
+
+func coalesceClaimLeaseSeconds(value int) int {
+	if value < 1 {
+		return defaultBuildClaimLeaseSeconds
+	}
+	return value
+}
+
+func coalesceClaimRenewInterval(value time.Duration) time.Duration {
+	if value <= 0 {
+		return defaultBuildClaimRenewInterval
+	}
+	return value
+}
+
+func coalesceBuildMaxDuration(value time.Duration) time.Duration {
+	if value <= 0 {
+		return defaultBuildMaxDuration
+	}
+	return value
+}
+
+func prioritizeRenewalError(executeErr error, renewErr error) error {
+	if renewErr == nil {
+		return executeErr
+	}
+	if executeErr == nil || errors.Is(executeErr, context.Canceled) {
+		return renewErr
+	}
+	return errors.Join(executeErr, renewErr)
+}
+
+func joinNonNil(errs ...error) error {
+	filtered := make([]error, 0, len(errs))
+	for _, err := range errs {
+		if err != nil {
+			filtered = append(filtered, err)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return errors.Join(filtered...)
+}
+
+func classifyFailurePhase(executeErr error, renewErr error) string {
+	if renewErr != nil {
+		return "claim.renew_failed"
+	}
+	if errors.Is(executeErr, context.DeadlineExceeded) {
+		return "build.execution_timed_out"
+	}
+	if errors.Is(executeErr, context.Canceled) {
+		return "build.execution_canceled"
+	}
+	return "build.execution_failed"
+}
+
+func classifyResultPhase(status string) string {
+	switch status {
+	case "succeeded":
+		return "build.execution_succeeded"
+	case "failed":
+		return "build.execution_failed"
+	case "canceled":
+		return "build.execution_canceled"
+	default:
+		return "build.execution_finished"
+	}
+}
+
+func firstErrorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }

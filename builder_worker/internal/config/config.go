@@ -19,6 +19,9 @@ type Config struct {
 	PullPollInterval        time.Duration
 	PullMaxAttempts         int
 	PullMaxConcurrentBuilds int
+	BuildClaimLeaseSeconds  int
+	BuildClaimRenewInterval time.Duration
+	BuildMaxDuration        time.Duration
 	ControlPlaneBaseURL     string
 	InternalServiceToken    string
 	ServiceName             string
@@ -56,10 +59,12 @@ func LoadFromEnv() (Config, error) {
 		CloudflareAPIToken:      os.Getenv("CP_CLOUDFLARE_API_TOKEN"),
 		CloudflareQueueID:       os.Getenv("CP_CLOUDFLARE_QUEUE_ID"),
 		PullBatchSize:           intEnv("CP_CLOUDFLARE_PULL_BATCH_SIZE", 5),
-		PullVisibilityTimeoutMS: intEnv("CP_CLOUDFLARE_PULL_VISIBILITY_TIMEOUT_MS", 30000),
 		PullPollInterval:        time.Duration(intEnv("CP_CLOUDFLARE_PULL_POLL_INTERVAL_SECONDS", 5)) * time.Second,
 		PullMaxAttempts:         intEnv("CP_CLOUDFLARE_PULL_MAX_ATTEMPTS", 3),
 		PullMaxConcurrentBuilds: intEnv("CP_CLOUDFLARE_PULL_MAX_CONCURRENT_BUILDS", 2),
+		BuildClaimLeaseSeconds:  intEnv("CP_BUILD_CLAIM_LEASE_SECONDS", 900),
+		BuildClaimRenewInterval: time.Duration(intEnv("CP_BUILD_CLAIM_RENEW_INTERVAL_SECONDS", 300)) * time.Second,
+		BuildMaxDuration:        time.Duration(intEnv("CP_BUILD_MAX_DURATION_SECONDS", 840)) * time.Second,
 		ControlPlaneBaseURL:     envOrDefault("CP_CELERY_BUILDER_BASE_URL", "http://localhost:8000"),
 		InternalServiceToken:    os.Getenv("CP_INTERNAL_SERVICE_TOKEN"),
 		ServiceName:             envOrDefault("CP_CELERY_BUILDER_SERVICE_NAME", "cloudflare-builder-worker"),
@@ -90,6 +95,11 @@ func LoadFromEnv() (Config, error) {
 		RunOnce:                 boolEnv("CP_CLOUDFLARE_PULL_RUN_ONCE", false),
 	}
 
+	cfg.PullVisibilityTimeoutMS = intEnv(
+		"CP_CLOUDFLARE_PULL_VISIBILITY_TIMEOUT_MS",
+		cfg.BuildClaimLeaseSeconds*1000,
+	)
+
 	if cfg.PullBatchSize < 1 {
 		return Config{}, fmt.Errorf("CP_CLOUDFLARE_PULL_BATCH_SIZE must be >= 1")
 	}
@@ -101,6 +111,24 @@ func LoadFromEnv() (Config, error) {
 	}
 	if cfg.PullMaxConcurrentBuilds < 1 {
 		return Config{}, fmt.Errorf("CP_CLOUDFLARE_PULL_MAX_CONCURRENT_BUILDS must be >= 1")
+	}
+	if cfg.BuildClaimLeaseSeconds < 1 {
+		return Config{}, fmt.Errorf("CP_BUILD_CLAIM_LEASE_SECONDS must be >= 1")
+	}
+	if cfg.BuildClaimRenewInterval <= 0 {
+		return Config{}, fmt.Errorf("CP_BUILD_CLAIM_RENEW_INTERVAL_SECONDS must be >= 1")
+	}
+	if cfg.BuildMaxDuration <= 0 {
+		return Config{}, fmt.Errorf("CP_BUILD_MAX_DURATION_SECONDS must be >= 1")
+	}
+	if cfg.BuildClaimRenewInterval >= time.Duration(cfg.BuildClaimLeaseSeconds)*time.Second {
+		return Config{}, fmt.Errorf("CP_BUILD_CLAIM_RENEW_INTERVAL_SECONDS must be less than CP_BUILD_CLAIM_LEASE_SECONDS")
+	}
+	if cfg.BuildMaxDuration >= time.Duration(cfg.BuildClaimLeaseSeconds)*time.Second {
+		return Config{}, fmt.Errorf("CP_BUILD_MAX_DURATION_SECONDS must be less than CP_BUILD_CLAIM_LEASE_SECONDS")
+	}
+	if cfg.PullVisibilityTimeoutMS < cfg.BuildClaimLeaseSeconds*1000 {
+		return Config{}, fmt.Errorf("CP_CLOUDFLARE_PULL_VISIBILITY_TIMEOUT_MS must be >= CP_BUILD_CLAIM_LEASE_SECONDS * 1000")
 	}
 	if cfg.BuildDockerPidsLimit < 1 {
 		return Config{}, fmt.Errorf("CP_BUILD_DOCKER_PIDS_LIMIT must be >= 1")

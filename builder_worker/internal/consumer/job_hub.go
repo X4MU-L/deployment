@@ -24,11 +24,15 @@ type BuildJobHub struct {
 	maxConcurrent int
 	maxAttempts   int
 	handler       MessageHandler
+	semaphore     chan struct{}
+	results       chan jobOutcome
+	mu            sync.Mutex
+	inflight      int
 }
 
 type jobOutcome struct {
-	index  int
-	action messageAction
+	message queue.PulledMessage
+	action  messageAction
 }
 
 func NewBuildJobHub(maxConcurrent int, maxAttempts int, handler MessageHandler) *BuildJobHub {
@@ -39,46 +43,64 @@ func NewBuildJobHub(maxConcurrent int, maxAttempts int, handler MessageHandler) 
 		maxConcurrent: maxConcurrent,
 		maxAttempts:   maxAttempts,
 		handler:       handler,
+		semaphore:     make(chan struct{}, maxConcurrent),
+		results:       make(chan jobOutcome, maxConcurrent),
 	}
 }
 
-func (h *BuildJobHub) ProcessBatch(
-	ctx context.Context,
-	messages []queue.PulledMessage,
-) []messageAction {
-	results := make([]messageAction, len(messages))
-	if len(messages) == 0 {
-		return results
-	}
+func (h *BuildJobHub) InFlight() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.inflight
+}
 
-	semaphore := make(chan struct{}, h.maxConcurrent)
-	outcomes := make(chan jobOutcome, len(messages))
-	var waitGroup sync.WaitGroup
+func (h *BuildJobHub) AvailableCapacity() int {
+	return h.maxConcurrent - h.InFlight()
+}
 
-	for index, message := range messages {
-		waitGroup.Add(1)
-		semaphore <- struct{}{}
-		go func(index int, message queue.PulledMessage) {
-			defer waitGroup.Done()
-			defer func() {
-				<-semaphore
-			}()
-			outcomes <- jobOutcome{
-				index:  index,
-				action: h.classifyMessage(ctx, message),
+func (h *BuildJobHub) TrySubmit(ctx context.Context, message queue.PulledMessage) bool {
+	select {
+	case h.semaphore <- struct{}{}:
+		h.mu.Lock()
+		h.inflight++
+		h.mu.Unlock()
+
+		go func() {
+			action := h.classifyMessage(ctx, message)
+			h.results <- jobOutcome{
+				message: message,
+				action:  action,
 			}
-		}(index, message)
+			<-h.semaphore
+			h.mu.Lock()
+			h.inflight--
+			h.mu.Unlock()
+		}()
+		return true
+	default:
+		return false
 	}
+}
 
-	go func() {
-		waitGroup.Wait()
-		close(outcomes)
-	}()
-
-	for outcome := range outcomes {
-		results[outcome.index] = outcome.action
+func (h *BuildJobHub) DrainReadyResults() []jobOutcome {
+	outcomes := make([]jobOutcome, 0)
+	for {
+		select {
+		case outcome := <-h.results:
+			outcomes = append(outcomes, outcome)
+		default:
+			return outcomes
+		}
 	}
-	return results
+}
+
+func (h *BuildJobHub) WaitForResult(ctx context.Context) (jobOutcome, bool) {
+	select {
+	case <-ctx.Done():
+		return jobOutcome{}, false
+	case outcome := <-h.results:
+		return outcome, true
+	}
 }
 
 func (h *BuildJobHub) classifyMessage(ctx context.Context, message queue.PulledMessage) messageAction {
