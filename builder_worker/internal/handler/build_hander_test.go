@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"builder_worker/internal/consumer"
 	"builder_worker/internal/contracts"
 	"builder_worker/internal/controlplane"
 	"builder_worker/internal/executor"
@@ -13,16 +14,19 @@ import (
 
 func TestBuildHandlerCompletesSuccessfulBuild(t *testing.T) {
 	controlPlane := &stubControlPlaneClient{
-		build: controlplane.BuildResponse{
-			ID:               "build-1",
-			ProjectID:        "project-1",
-			PlannedReleaseID: "release-1",
-			SourceRef:        "refs/heads/main",
-			SourceSnapshot: map[string]any{
-				"project_name": "demo-app",
-			},
-			BuildConfig: map[string]any{
-				"output_directory": "dist",
+		claimResponse: controlplane.BuildClaimResponse{
+			Claimed: true,
+			Build: controlplane.BuildResponse{
+				ID:               "build-1",
+				ProjectID:        "project-1",
+				PlannedReleaseID: "release-1",
+				SourceRef:        "refs/heads/main",
+				SourceSnapshot: map[string]any{
+					"project_name": "demo-app",
+				},
+				BuildConfig: map[string]any{
+					"output_directory": "dist",
+				},
 			},
 		},
 	}
@@ -51,8 +55,11 @@ func TestBuildHandlerCompletesSuccessfulBuild(t *testing.T) {
 		t.Fatalf("Handle returned error: %v", err)
 	}
 
-	if len(controlPlane.statusUpdates) != 1 || controlPlane.statusUpdates[0].Status != "running" {
-		t.Fatalf("unexpected status updates: %#v", controlPlane.statusUpdates)
+	if len(controlPlane.claimRequests) != 1 || controlPlane.claimRequests[0].LeaseSeconds != defaultBuildClaimLeaseSeconds {
+		t.Fatalf("unexpected claim requests: %#v", controlPlane.claimRequests)
+	}
+	if len(controlPlane.statusUpdates) != 0 {
+		t.Fatalf("did not expect direct status updates when claim endpoint is used: %#v", controlPlane.statusUpdates)
 	}
 	if len(controlPlane.logRequests) != 9 {
 		t.Fatalf("expected 9 log lines, got %d", len(controlPlane.logRequests))
@@ -80,11 +87,14 @@ func TestBuildHandlerCompletesSuccessfulBuild(t *testing.T) {
 
 func TestBuildHandlerFailsUnsupportedRepo(t *testing.T) {
 	controlPlane := &stubControlPlaneClient{
-		build: controlplane.BuildResponse{
-			ID:               "build-1",
-			ProjectID:        "project-1",
-			PlannedReleaseID: "release-1",
-			SourceRef:        "refs/heads/main",
+		claimResponse: controlplane.BuildClaimResponse{
+			Claimed: true,
+			Build: controlplane.BuildResponse{
+				ID:               "build-1",
+				ProjectID:        "project-1",
+				PlannedReleaseID: "release-1",
+				SourceRef:        "refs/heads/main",
+			},
 		},
 	}
 	buildExecutor := &stubExecutor{
@@ -123,11 +133,14 @@ func TestBuildHandlerFailsUnsupportedRepo(t *testing.T) {
 
 func TestBuildHandlerFailsWhenExecutorReturnsError(t *testing.T) {
 	controlPlane := &stubControlPlaneClient{
-		build: controlplane.BuildResponse{
-			ID:               "build-1",
-			ProjectID:        "project-1",
-			PlannedReleaseID: "release-1",
-			SourceRef:        "refs/heads/main",
+		claimResponse: controlplane.BuildClaimResponse{
+			Claimed: true,
+			Build: controlplane.BuildResponse{
+				ID:               "build-1",
+				ProjectID:        "project-1",
+				PlannedReleaseID: "release-1",
+				SourceRef:        "refs/heads/main",
+			},
 		},
 	}
 	buildExecutor := &stubExecutor{
@@ -147,12 +160,15 @@ func TestBuildHandlerFailsWhenExecutorReturnsError(t *testing.T) {
 
 func TestBuildHandlerUsesRepositoryPrivacyMetadata(t *testing.T) {
 	controlPlane := &stubControlPlaneClient{
-		build: controlplane.BuildResponse{
-			ID:               "build-1",
-			ProjectID:        "project-1",
-			PlannedReleaseID: "release-1",
-			SourceSnapshot: map[string]any{
-				"source_repository": map[string]any{"private": true},
+		claimResponse: controlplane.BuildClaimResponse{
+			Claimed: true,
+			Build: controlplane.BuildResponse{
+				ID:               "build-1",
+				ProjectID:        "project-1",
+				PlannedReleaseID: "release-1",
+				SourceSnapshot: map[string]any{
+					"source_repository": map[string]any{"private": true},
+				},
 			},
 		},
 	}
@@ -186,10 +202,13 @@ func TestBuildHandlerUsesRepositoryPrivacyMetadata(t *testing.T) {
 
 func TestBuildHandlerReturnsLogForwarderError(t *testing.T) {
 	controlPlane := &stubControlPlaneClient{
-		build: controlplane.BuildResponse{
-			ID:               "build-1",
-			ProjectID:        "project-1",
-			PlannedReleaseID: "release-1",
+		claimResponse: controlplane.BuildClaimResponse{
+			Claimed: true,
+			Build: controlplane.BuildResponse{
+				ID:               "build-1",
+				ProjectID:        "project-1",
+				PlannedReleaseID: "release-1",
+			},
 		},
 	}
 	buildExecutor := &stubExecutor{
@@ -210,8 +229,38 @@ func TestBuildHandlerReturnsLogForwarderError(t *testing.T) {
 	}
 }
 
+func TestBuildHandlerReturnsTerminalErrorWhenClaimDenied(t *testing.T) {
+	controlPlane := &stubControlPlaneClient{
+		claimResponse: controlplane.BuildClaimResponse{
+			Claimed: false,
+			Reason:  "lease_active",
+			Build: controlplane.BuildResponse{
+				ID:               "build-1",
+				ProjectID:        "project-1",
+				PlannedReleaseID: "release-1",
+				Status:           "running",
+			},
+		},
+	}
+	buildExecutor := &stubExecutor{}
+	buildHandler := NewBuildHandlerWithDeps(controlPlane, buildExecutor, NewControlPlaneLogForwarder(controlPlane))
+
+	err := buildHandler.Handle(context.Background(), buildRequestedMessage(false))
+	if err == nil || !consumer.IsTerminalError(err) {
+		t.Fatalf("expected terminal claim-denied error, got %v", err)
+	}
+	if len(buildExecutor.requests) != 0 {
+		t.Fatalf("executor should not run when claim is denied: %#v", buildExecutor.requests)
+	}
+	if len(controlPlane.completeRequests) != 0 {
+		t.Fatalf("completion should not be sent when claim is denied: %#v", controlPlane.completeRequests)
+	}
+}
+
 type stubControlPlaneClient struct {
 	build            controlplane.BuildResponse
+	claimResponse    controlplane.BuildClaimResponse
+	claimRequests    []controlplane.BuildClaimRequest
 	statusUpdates    []controlplane.BuildStatusUpdateRequest
 	logRequests      []controlplane.BuildLogIngestRequest
 	completeRequests []controlplane.BuildCompleteRequest
@@ -221,6 +270,11 @@ type stubControlPlaneClient struct {
 
 func (s *stubControlPlaneClient) GetBuild(_ context.Context, _ string) (controlplane.BuildResponse, error) {
 	return s.build, nil
+}
+
+func (s *stubControlPlaneClient) ClaimBuild(_ context.Context, _ string, request controlplane.BuildClaimRequest) (controlplane.BuildClaimResponse, error) {
+	s.claimRequests = append(s.claimRequests, request)
+	return s.claimResponse, nil
 }
 
 func (s *stubControlPlaneClient) UpdateBuildStatus(_ context.Context, _ string, request controlplane.BuildStatusUpdateRequest) error {

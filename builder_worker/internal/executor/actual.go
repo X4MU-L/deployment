@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"builder_worker/internal/artifacts"
+	"builder_worker/internal/contracts"
 )
 
 type SourceFetchRequest struct {
@@ -41,6 +43,9 @@ type DockerRunnerConfig struct {
 	Image            string
 	InstallNetwork   string
 	BuildNetwork     string
+	CPUs             string
+	Memory           string
+	MemorySwap       string
 	ReadOnlyRootFS   bool
 	PidsLimit        int
 	DropCapabilities bool
@@ -64,6 +69,9 @@ func NewActualBuildExecutor(publisher artifacts.Publisher) *ActualBuildExecutor 
 			Image:            "node:20-bookworm",
 			InstallNetwork:   "bridge",
 			BuildNetwork:     "none",
+			CPUs:             "2",
+			Memory:           "2g",
+			MemorySwap:       "2g",
 			ReadOnlyRootFS:   true,
 			PidsLimit:        256,
 			DropCapabilities: true,
@@ -117,6 +125,29 @@ func (e *ActualBuildExecutor) Execute(ctx context.Context, request BuildExecutio
 		BuildLogMessage{Stream: "stdout", Line: fmt.Sprintf("checkout ref: %s", sourceRef)},
 	); err != nil {
 		return BuildExecutionResult{}, err
+	}
+
+	supported, reason := isSupportedActualSource(build.SourceSnapshot, message, repoURL)
+	if !supported {
+		if err := emitLogs(ctx, logSink,
+			BuildLogMessage{Stream: "stdout", Line: "repo visibility: unsupported for actual executor"},
+			BuildLogMessage{Stream: "stderr", Line: fmt.Sprintf("error: %s", reason)},
+		); err != nil {
+			return BuildExecutionResult{}, err
+		}
+		return BuildExecutionResult{
+			Status:       "failed",
+			ErrorMessage: reason,
+		}, nil
+	}
+	if isLocalRepoPath(repoURL) {
+		if err := emitLog(ctx, logSink, "stdout", "repo visibility: local workspace override"); err != nil {
+			return BuildExecutionResult{}, err
+		}
+	} else {
+		if err := emitLog(ctx, logSink, "stdout", "repo visibility: assumed public"); err != nil {
+			return BuildExecutionResult{}, err
+		}
 	}
 
 	repoDir, cleanup, err := e.fetcher.Fetch(ctx, SourceFetchRequest{
@@ -264,6 +295,23 @@ func (e *ActualBuildExecutor) Execute(ctx context.Context, request BuildExecutio
 
 type GitSourceFetcher struct{}
 
+type DockerGitSourceFetcherConfig struct {
+	Image            string
+	NetworkMode      string
+	CPUs             string
+	Memory           string
+	MemorySwap       string
+	PidsLimit        int
+	DropCapabilities bool
+	NoNewPrivileges  bool
+	MapHostUser      bool
+}
+
+type DockerGitSourceFetcher struct {
+	config         DockerGitSourceFetcherConfig
+	newExecCommand execCommandFactory
+}
+
 func (f *GitSourceFetcher) Fetch(ctx context.Context, request SourceFetchRequest) (string, func(), error) {
 	tempDir, err := os.MkdirTemp("", "builder-source-*")
 	if err != nil {
@@ -274,17 +322,131 @@ func (f *GitSourceFetcher) Fetch(ctx context.Context, request SourceFetchRequest
 	}
 
 	repoDir := filepath.Join(tempDir, "repo")
-	if err := runExecCommand(ctx, tempDir, nil, "git", "clone", request.RepoURL, repoDir); err != nil {
+	repoSource, err := normalizeRepoSource(request.RepoURL)
+	if err != nil {
 		cleanup()
-		return "", func() {}, fmt.Errorf("git clone failed: %w", err)
+		return "", func() {}, fmt.Errorf("normalize repo source: %w", err)
+	}
+	if err := runExecCommand(ctx, tempDir, nil, "git", "init", repoDir); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("git init failed: %w", err)
+	}
+	ref := firstNonEmpty(request.CommitSHA, request.SourceRef, request.DefaultBranch)
+	if ref == "" {
+		ref = "HEAD"
+	}
+	if err := runExecCommand(ctx, repoDir, nil, "git", "remote", "add", "origin", repoSource); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("git remote add failed: %w", err)
+	}
+	if err := runExecCommand(ctx, repoDir, nil, "git", "fetch", "--depth", "1", "--no-tags", "origin", ref); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("git fetch %s failed: %w", ref, err)
+	}
+	if err := runExecCommand(ctx, repoDir, nil, "git", "checkout", "--detach", "FETCH_HEAD"); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("git checkout FETCH_HEAD failed: %w", err)
 	}
 
+	return repoDir, cleanup, nil
+}
+
+func NewDockerGitSourceFetcherWithConfig(config DockerGitSourceFetcherConfig) *DockerGitSourceFetcher {
+	if config.Image == "" {
+		config.Image = "alpine/git:2.47.2"
+	}
+	if config.NetworkMode == "" {
+		config.NetworkMode = "bridge"
+	}
+	if config.CPUs == "" {
+		config.CPUs = "1"
+	}
+	if config.Memory == "" {
+		config.Memory = "1g"
+	}
+	if config.MemorySwap == "" && config.Memory != "" {
+		config.MemorySwap = config.Memory
+	}
+	if config.PidsLimit < 1 {
+		config.PidsLimit = 128
+	}
+	return &DockerGitSourceFetcher{
+		config:         config,
+		newExecCommand: exec.CommandContext,
+	}
+}
+
+func (f *DockerGitSourceFetcher) Fetch(ctx context.Context, request SourceFetchRequest) (string, func(), error) {
+	tempDir, err := os.MkdirTemp("", "builder-source-*")
+	if err != nil {
+		return "", func() {}, fmt.Errorf("create temp workspace: %w", err)
+	}
+	cleanup := func() {
+		_ = os.RemoveAll(tempDir)
+	}
+
+	repoDir := filepath.Join(tempDir, "repo")
+	repoSource, err := normalizeRepoSource(request.RepoURL)
+	if err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("normalize repo source: %w", err)
+	}
 	ref := firstNonEmpty(request.CommitSHA, request.SourceRef, request.DefaultBranch)
-	if ref != "" {
-		if err := runExecCommand(ctx, repoDir, nil, "git", "checkout", ref); err != nil {
-			cleanup()
-			return "", func() {}, fmt.Errorf("git checkout %s failed: %w", ref, err)
-		}
+	if ref == "" {
+		ref = "HEAD"
+	}
+
+	script := strings.Join([]string{
+		"set -euo pipefail",
+		"git init /workspace/repo",
+		fmt.Sprintf("git -C /workspace/repo remote add origin %s", shellQuote(repoSource)),
+		fmt.Sprintf("git -C /workspace/repo fetch --depth 1 --no-tags origin %s", shellQuote(ref)),
+		"git -C /workspace/repo checkout --detach FETCH_HEAD",
+	}, "\n")
+
+	args := []string{
+		"run",
+		"--rm",
+		"--workdir",
+		"/workspace",
+		"--volume",
+		tempDir + ":/workspace",
+		"--tmpfs",
+		"/tmp",
+		"--env",
+		"HOME=/tmp",
+	}
+	if f.config.NetworkMode != "" {
+		args = append(args, "--network", f.config.NetworkMode)
+	}
+	if f.config.CPUs != "" {
+		args = append(args, "--cpus", f.config.CPUs)
+	}
+	if f.config.Memory != "" {
+		args = append(args, "--memory", f.config.Memory)
+	}
+	if f.config.MemorySwap != "" {
+		args = append(args, "--memory-swap", f.config.MemorySwap)
+	}
+	if f.config.PidsLimit > 0 {
+		args = append(args, "--pids-limit", strconv.Itoa(f.config.PidsLimit))
+	}
+	if f.config.DropCapabilities {
+		args = append(args, "--cap-drop", "ALL")
+	}
+	if f.config.NoNewPrivileges {
+		args = append(args, "--security-opt", "no-new-privileges")
+	}
+	if f.config.MapHostUser {
+		args = append(args, "--user", formatHostUser())
+	}
+	args = append(args, f.config.Image, "sh", "-lc", script)
+
+	command := f.newExecCommand(ctx, "docker", args...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("dockerized git fetch failed: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 
 	return repoDir, cleanup, nil
@@ -314,6 +476,9 @@ func NewDockerCommandRunner(image string) *DockerCommandRunner {
 		Image:            image,
 		InstallNetwork:   "bridge",
 		BuildNetwork:     "none",
+		CPUs:             "2",
+		Memory:           "2g",
+		MemorySwap:       "2g",
 		ReadOnlyRootFS:   true,
 		PidsLimit:        256,
 		DropCapabilities: true,
@@ -333,6 +498,15 @@ func NewDockerCommandRunnerWithConfig(config DockerRunnerConfig) *DockerCommandR
 	}
 	if config.BuildNetwork == "" {
 		config.BuildNetwork = "none"
+	}
+	if config.CPUs == "" {
+		config.CPUs = "2"
+	}
+	if config.Memory == "" {
+		config.Memory = "2g"
+	}
+	if config.MemorySwap == "" && config.Memory != "" {
+		config.MemorySwap = config.Memory
 	}
 	if config.PidsLimit < 1 {
 		config.PidsLimit = 256
@@ -360,6 +534,15 @@ func (r *DockerCommandRunner) Run(ctx context.Context, request CommandRunRequest
 	}
 	if networkMode := r.networkModeForPhase(request.Phase); networkMode != "" {
 		args = append(args, "--network", networkMode)
+	}
+	if r.config.CPUs != "" {
+		args = append(args, "--cpus", r.config.CPUs)
+	}
+	if r.config.Memory != "" {
+		args = append(args, "--memory", r.config.Memory)
+	}
+	if r.config.MemorySwap != "" {
+		args = append(args, "--memory-swap", r.config.MemorySwap)
 	}
 	if r.config.ReadOnlyRootFS {
 		args = append(args, "--read-only")
@@ -473,6 +656,47 @@ func buildEnvList(env map[string]string) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+func isSupportedActualSource(sourceSnapshot map[string]any, message contracts.BuildRequestedMessage, repoURL string) (bool, string) {
+	if isLocalRepoPath(repoURL) {
+		return true, ""
+	}
+	parsed, err := url.Parse(repoURL)
+	if err != nil {
+		return false, "actual executor currently supports only public https://github.com repos"
+	}
+	if parsed.Scheme != "https" || parsed.Host != "github.com" || parsed.Path == "" || parsed.Path == "/" {
+		return false, "actual executor currently supports only public https://github.com repos"
+	}
+
+	repository := message.GitCheckout.Repository
+	if len(repository) == 0 {
+		repository = nestedMap(sourceSnapshot, "source_repository")
+	}
+	if privateValue, ok := repository["private"].(bool); ok && privateValue {
+		return false, "private repositories are not supported in the actual executor flow"
+	}
+	return true, ""
+}
+
+func isLocalRepoPath(repoURL string) bool {
+	return filepath.IsAbs(repoURL) || strings.HasPrefix(repoURL, "file://")
+}
+
+func normalizeRepoSource(repoURL string) (string, error) {
+	if strings.HasPrefix(repoURL, "file://") {
+		parsed, err := url.Parse(repoURL)
+		if err != nil {
+			return "", err
+		}
+		return parsed.Path, nil
+	}
+	return repoURL, nil
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }
 
 func runExecCommand(ctx context.Context, workDir string, env []string, name string, args ...string) error {

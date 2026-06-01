@@ -33,9 +33,20 @@ type BuildResponse struct {
 	ID               string         `json:"id"`
 	ProjectID        string         `json:"project_id"`
 	PlannedReleaseID string         `json:"planned_release_id"`
+	Status           string         `json:"status"`
 	SourceRef        string         `json:"source_ref"`
 	SourceSnapshot   map[string]any `json:"source_snapshot"`
 	BuildConfig      map[string]any `json:"build_config"`
+}
+
+type BuildClaimRequest struct {
+	LeaseSeconds int `json:"lease_seconds"`
+}
+
+type BuildClaimResponse struct {
+	Claimed bool          `json:"claimed"`
+	Reason  string        `json:"reason"`
+	Build   BuildResponse `json:"build"`
 }
 
 type BuildStatusUpdateRequest struct {
@@ -61,6 +72,12 @@ func (c *Client) GetBuild(ctx context.Context, buildID string) (BuildResponse, e
 	var build BuildResponse
 	err := c.doJSON(ctx, http.MethodGet, fmt.Sprintf("/api/v1/internal/builds/%s", buildID), nil, &build)
 	return build, err
+}
+
+func (c *Client) ClaimBuild(ctx context.Context, buildID string, request BuildClaimRequest) (BuildClaimResponse, error) {
+	var response BuildClaimResponse
+	err := c.doJSON(ctx, http.MethodPost, fmt.Sprintf("/api/v1/internal/builds/%s/claim", buildID), request, &response)
+	return response, err
 }
 
 func (c *Client) UpdateBuildStatus(ctx context.Context, buildID string, request BuildStatusUpdateRequest) error {

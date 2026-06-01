@@ -7,6 +7,9 @@ func TestBuildCommandRunnerDefaultsToDocker(t *testing.T) {
 		DockerImage:          "node:20-bookworm",
 		DockerInstallNetwork: "bridge",
 		DockerBuildNetwork:   "none",
+		DockerCPUs:           "1.5",
+		DockerMemory:         "1g",
+		DockerMemorySwap:     "1g",
 		DockerPidsLimit:      32,
 		AllowedDockerImages:  []string{"node:20-bookworm"},
 	})
@@ -17,7 +20,7 @@ func TestBuildCommandRunnerDefaultsToDocker(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected docker runner, got %T", runner)
 	}
-	if dockerRunner.config.InstallNetwork != "bridge" || dockerRunner.config.BuildNetwork != "none" || dockerRunner.config.PidsLimit != 32 {
+	if dockerRunner.config.InstallNetwork != "bridge" || dockerRunner.config.BuildNetwork != "none" || dockerRunner.config.PidsLimit != 32 || dockerRunner.config.CPUs != "1.5" || dockerRunner.config.Memory != "1g" || dockerRunner.config.MemorySwap != "1g" {
 		t.Fatalf("unexpected docker runner config: %#v", dockerRunner.config)
 	}
 }

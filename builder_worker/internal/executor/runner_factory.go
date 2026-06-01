@@ -14,6 +14,9 @@ type CommandRunnerFactoryConfig struct {
 	DockerImage          string
 	DockerInstallNetwork string
 	DockerBuildNetwork   string
+	DockerCPUs           string
+	DockerMemory         string
+	DockerMemorySwap     string
 	DockerPidsLimit      int
 	AllowedDockerImages  []string
 }
@@ -24,13 +27,16 @@ type CommandRunnerFactoryConfig struct {
 func BuildCommandRunner(provider string, config CommandRunnerFactoryConfig) (CommandRunner, error) {
 	switch provider {
 	case "", CommandRunnerProviderDocker:
-		if len(config.AllowedDockerImages) > 0 && !slices.Contains(config.AllowedDockerImages, config.DockerImage) {
-			return nil, fmt.Errorf("docker image %q is not in the allowed image list", config.DockerImage)
+		if err := validateAllowedDockerImage(config.DockerImage, config.AllowedDockerImages); err != nil {
+			return nil, err
 		}
 		return NewDockerCommandRunnerWithConfig(DockerRunnerConfig{
 			Image:            config.DockerImage,
 			InstallNetwork:   config.DockerInstallNetwork,
 			BuildNetwork:     config.DockerBuildNetwork,
+			CPUs:             config.DockerCPUs,
+			Memory:           config.DockerMemory,
+			MemorySwap:       config.DockerMemorySwap,
 			ReadOnlyRootFS:   true,
 			PidsLimit:        config.DockerPidsLimit,
 			DropCapabilities: true,
@@ -42,4 +48,11 @@ func BuildCommandRunner(provider string, config CommandRunnerFactoryConfig) (Com
 	default:
 		return nil, fmt.Errorf("unsupported command runner provider %q", provider)
 	}
+}
+
+func validateAllowedDockerImage(image string, allowedImages []string) error {
+	if len(allowedImages) > 0 && !slices.Contains(allowedImages, image) {
+		return fmt.Errorf("docker image %q is not in the allowed image list", image)
+	}
+	return nil
 }

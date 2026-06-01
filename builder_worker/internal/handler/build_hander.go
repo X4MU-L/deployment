@@ -2,12 +2,15 @@ package handler
 
 import (
 	"context"
+	"fmt"
 
 	"builder_worker/internal/artifacts"
 	"builder_worker/internal/contracts"
 	"builder_worker/internal/controlplane"
 	"builder_worker/internal/executor"
 )
+
+const defaultBuildClaimLeaseSeconds = 900
 
 type BuildHandler struct {
 	controlPlaneClient ControlPlaneClient
@@ -20,10 +23,20 @@ type BuildHandlerConfig struct {
 	ServiceToken          string
 	ServiceName           string
 	BuildExecutorProvider string
+	SourceFetcherProvider string
+	FetchDockerImage      string
+	FetchDockerNetwork    string
+	FetchDockerCPUs       string
+	FetchDockerMemory     string
+	FetchDockerMemorySwap string
+	FetchDockerPidsLimit  int
 	CommandRunnerProvider string
 	BuildDockerImage      string
 	BuildDockerInstallNet string
 	BuildDockerBuildNet   string
+	BuildDockerCPUs       string
+	BuildDockerMemory     string
+	BuildDockerMemorySwap string
 	BuildDockerPidsLimit  int
 	AllowedDockerImages   []string
 	ArtifactStoreProvider string
@@ -56,10 +69,20 @@ func NewBuildHandler(config BuildHandlerConfig) (*BuildHandler, error) {
 	// We have different implementations of the build executor, such as a simulated one for testing and an actual one that runs real builds.
 	buildExecutor, err := executor.Build(config.BuildExecutorProvider, executor.FactoryConfig{
 		Publisher:             publisher,
+		SourceFetcherProvider: config.SourceFetcherProvider,
+		FetchDockerImage:      config.FetchDockerImage,
+		FetchDockerNetwork:    config.FetchDockerNetwork,
+		FetchDockerCPUs:       config.FetchDockerCPUs,
+		FetchDockerMemory:     config.FetchDockerMemory,
+		FetchDockerMemorySwap: config.FetchDockerMemorySwap,
+		FetchDockerPidsLimit:  config.FetchDockerPidsLimit,
 		CommandRunnerProvider: config.CommandRunnerProvider,
 		DockerImage:           config.BuildDockerImage,
 		DockerInstallNetwork:  config.BuildDockerInstallNet,
 		DockerBuildNetwork:    config.BuildDockerBuildNet,
+		DockerCPUs:            config.BuildDockerCPUs,
+		DockerMemory:          config.BuildDockerMemory,
+		DockerMemorySwap:      config.BuildDockerMemorySwap,
 		DockerPidsLimit:       config.BuildDockerPidsLimit,
 		AllowedDockerImages:   config.AllowedDockerImages,
 	})
@@ -90,16 +113,20 @@ func NewBuildHandlerWithDeps(controlPlaneClient ControlPlaneClient, buildExecuto
 }
 
 func (h *BuildHandler) Handle(ctx context.Context, message contracts.BuildRequestedMessage) error {
-	build, err := h.controlPlaneClient.GetBuild(ctx, message.BuildID)
+	claim, err := h.controlPlaneClient.ClaimBuild(ctx, message.BuildID, controlplane.BuildClaimRequest{
+		LeaseSeconds: defaultBuildClaimLeaseSeconds,
+	})
 	if err != nil {
 		return err
 	}
-
-	if err := h.controlPlaneClient.UpdateBuildStatus(ctx, message.BuildID, controlplane.BuildStatusUpdateRequest{
-		Status: "running",
-	}); err != nil {
-		return err
+	if !claim.Claimed {
+		reason := claim.Reason
+		if reason == "" {
+			reason = "not_claimable"
+		}
+		return TerminalError(fmt.Errorf("build claim denied for %s: %s", message.BuildID, reason))
 	}
+	build := claim.Build
 
 	logMessages := make(chan executor.BuildLogMessage, 16)
 	forwardErrCh := make(chan error, 1)

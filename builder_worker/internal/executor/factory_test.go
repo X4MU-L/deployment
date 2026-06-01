@@ -22,6 +22,7 @@ func TestBuildResolvesSimulatedExecutor(t *testing.T) {
 func TestBuildResolvesActualExecutor(t *testing.T) {
 	buildExecutor, err := Build(ProviderActual, FactoryConfig{
 		Publisher:             &stubPublisher{},
+		SourceFetcherProvider: SourceFetcherProviderHost,
 		CommandRunnerProvider: CommandRunnerProviderShell,
 	})
 	if err != nil {
@@ -44,10 +45,22 @@ func TestBuildRejectsUnknownProvider(t *testing.T) {
 func TestBuildRejectsUnknownCommandRunnerProvider(t *testing.T) {
 	_, err := Build(ProviderActual, FactoryConfig{
 		Publisher:             &stubPublisher{},
+		SourceFetcherProvider: SourceFetcherProviderHost,
 		CommandRunnerProvider: "unknown",
 	})
 	if err == nil || !strings.Contains(err.Error(), "unsupported command runner provider") {
 		t.Fatalf("expected unsupported command runner provider error, got %v", err)
+	}
+}
+
+func TestBuildRejectsUnknownSourceFetcherProvider(t *testing.T) {
+	_, err := Build(ProviderActual, FactoryConfig{
+		Publisher:             &stubPublisher{},
+		SourceFetcherProvider: "unknown",
+		CommandRunnerProvider: CommandRunnerProviderShell,
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported source fetcher provider") {
+		t.Fatalf("expected unsupported source fetcher provider error, got %v", err)
 	}
 }
 

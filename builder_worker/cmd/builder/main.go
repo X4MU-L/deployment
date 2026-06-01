@@ -22,7 +22,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
-	
+
 	// set up signal handling for graceful shutdown
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -30,7 +30,7 @@ func main() {
 	// Initialize Queue client
 	// The queue client uses the aws-sdk-go-v2 which does not support context cancellation on long polling ReceiveMessage calls.
 	// To ensure we can gracefully shut down, we set the long poll wait time to a value shorter than our shutdown timeout and rely on context cancellation between calls.
-	// the queue client implements interfaces to 
+	// the queue client implements interfaces to
 	// Pull messages from the queue and delete them when done, but does not handle visibility timeouts or retries, which are handled by the consumer.
 	// Acknowlegde messages..
 	queueClient := queue.NewHTTPClient(queue.Config{
@@ -39,7 +39,6 @@ func main() {
 		APIToken:   cfg.CloudflareAPIToken,
 		QueueID:    cfg.CloudflareQueueID,
 	})
-
 
 	// Initialize Build Handler
 	// The build handler is responsible for processing build messages pulled from the queue, executing the builds using the configured executor, and reporting results back to the control plane.
@@ -59,10 +58,20 @@ func main() {
 		ServiceToken:          cfg.InternalServiceToken,
 		ServiceName:           cfg.ServiceName,
 		BuildExecutorProvider: cfg.BuildExecutorProvider,
+		SourceFetcherProvider: cfg.SourceFetcherProvider,
+		FetchDockerImage:      cfg.FetchDockerImage,
+		FetchDockerNetwork:    cfg.FetchDockerNetwork,
+		FetchDockerCPUs:       cfg.FetchDockerCPUs,
+		FetchDockerMemory:     cfg.FetchDockerMemory,
+		FetchDockerMemorySwap: cfg.FetchDockerMemorySwap,
+		FetchDockerPidsLimit:  cfg.FetchDockerPidsLimit,
 		CommandRunnerProvider: cfg.CommandRunnerProvider,
 		BuildDockerImage:      cfg.BuildDockerImage,
 		BuildDockerInstallNet: cfg.BuildDockerInstallNet,
 		BuildDockerBuildNet:   cfg.BuildDockerBuildNet,
+		BuildDockerCPUs:       cfg.BuildDockerCPUs,
+		BuildDockerMemory:     cfg.BuildDockerMemory,
+		BuildDockerMemorySwap: cfg.BuildDockerMemorySwap,
 		BuildDockerPidsLimit:  cfg.BuildDockerPidsLimit,
 		AllowedDockerImages:   cfg.AllowedDockerImages,
 		ArtifactStoreProvider: cfg.ArtifactStoreProvider,
@@ -87,6 +96,7 @@ func main() {
 		BatchSize:           cfg.PullBatchSize,
 		VisibilityTimeoutMS: cfg.PullVisibilityTimeoutMS,
 		MaxAttempts:         cfg.PullMaxAttempts,
+		MaxConcurrentBuilds: cfg.PullMaxConcurrentBuilds,
 	}, queueClient, buildHandler)
 
 	if cfg.RunOnce {

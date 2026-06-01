@@ -2,10 +2,7 @@ package consumer
 
 import (
 	"context"
-	"errors"
-	"fmt"
 
-	"builder_worker/internal/contracts"
 	"builder_worker/internal/queue"
 )
 
@@ -13,23 +10,20 @@ type Config struct {
 	BatchSize           int
 	VisibilityTimeoutMS int
 	MaxAttempts         int
-}
-
-type MessageHandler interface {
-	Handle(context.Context, contracts.BuildRequestedMessage) error
+	MaxConcurrentBuilds int
 }
 
 type Consumer struct {
 	config      Config
 	queueClient queue.Client
-	handler     MessageHandler
+	jobHub      *BuildJobHub
 }
 
 func New(config Config, queueClient queue.Client, handler MessageHandler) *Consumer {
 	return &Consumer{
 		config:      config,
 		queueClient: queueClient,
-		handler:     handler,
+		jobHub:      NewBuildJobHub(config.MaxConcurrentBuilds, config.MaxAttempts, handler),
 	}
 }
 
@@ -42,17 +36,16 @@ func (c *Consumer) RunOnce(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 
+	actions := c.jobHub.ProcessBatch(ctx, messages)
 	acks := make([]string, 0, len(messages))
 	retries := make([]string, 0, len(messages))
-	for _, message := range messages {
-		action := c.classifyMessage(ctx, message)
+	for index, message := range messages {
+		action := actions[index]
 		switch action {
 		case acknowledgeMessage:
 			acks = append(acks, message.LeaseID)
 		case retryMessage:
 			retries = append(retries, message.LeaseID)
-		default:
-			return 0, fmt.Errorf("unsupported queue action: %s", action)
 		}
 	}
 
@@ -60,30 +53,6 @@ func (c *Consumer) RunOnce(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	return len(messages), nil
-}
-
-type messageAction string
-
-const (
-	acknowledgeMessage messageAction = "ack"
-	retryMessage       messageAction = "retry"
-)
-
-func (c *Consumer) classifyMessage(ctx context.Context, message queue.PulledMessage) messageAction {
-	var buildRequest contracts.BuildRequestedMessage
-	if err := message.DecodeJSON(&buildRequest); err != nil {
-		return acknowledgeMessage
-	}
-	if err := buildRequest.Validate(); err != nil {
-		return acknowledgeMessage
-	}
-	if err := c.handler.Handle(ctx, buildRequest); err != nil {
-		if message.Attempts >= c.config.MaxAttempts || errors.Is(err, ErrTerminalHandlerFailure) {
-			return acknowledgeMessage
-		}
-		return retryMessage
-	}
-	return acknowledgeMessage
 }
 
 var ErrTerminalHandlerFailure = errors.New("terminal handler failure")

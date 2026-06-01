@@ -18,14 +18,25 @@ type Config struct {
 	PullVisibilityTimeoutMS int
 	PullPollInterval        time.Duration
 	PullMaxAttempts         int
+	PullMaxConcurrentBuilds int
 	ControlPlaneBaseURL     string
 	InternalServiceToken    string
 	ServiceName             string
 	BuildExecutorProvider   string
+	SourceFetcherProvider   string
+	FetchDockerImage        string
+	FetchDockerNetwork      string
+	FetchDockerCPUs         string
+	FetchDockerMemory       string
+	FetchDockerMemorySwap   string
+	FetchDockerPidsLimit    int
 	CommandRunnerProvider   string
 	BuildDockerImage        string
 	BuildDockerInstallNet   string
 	BuildDockerBuildNet     string
+	BuildDockerCPUs         string
+	BuildDockerMemory       string
+	BuildDockerMemorySwap   string
 	BuildDockerPidsLimit    int
 	AllowedDockerImages     []string
 	ArtifactStoreProvider   string
@@ -48,14 +59,25 @@ func LoadFromEnv() (Config, error) {
 		PullVisibilityTimeoutMS: intEnv("CP_CLOUDFLARE_PULL_VISIBILITY_TIMEOUT_MS", 30000),
 		PullPollInterval:        time.Duration(intEnv("CP_CLOUDFLARE_PULL_POLL_INTERVAL_SECONDS", 5)) * time.Second,
 		PullMaxAttempts:         intEnv("CP_CLOUDFLARE_PULL_MAX_ATTEMPTS", 3),
+		PullMaxConcurrentBuilds: intEnv("CP_CLOUDFLARE_PULL_MAX_CONCURRENT_BUILDS", 2),
 		ControlPlaneBaseURL:     envOrDefault("CP_CELERY_BUILDER_BASE_URL", "http://localhost:8000"),
 		InternalServiceToken:    os.Getenv("CP_INTERNAL_SERVICE_TOKEN"),
 		ServiceName:             envOrDefault("CP_CELERY_BUILDER_SERVICE_NAME", "cloudflare-builder-worker"),
 		BuildExecutorProvider:   envOrDefault("CP_BUILD_EXECUTOR_PROVIDER", "simulated"),
+		SourceFetcherProvider:   envOrDefault("CP_SOURCE_FETCHER_PROVIDER", "docker"),
+		FetchDockerImage:        envOrDefault("CP_FETCH_DOCKER_IMAGE", "alpine/git:2.47.2"),
+		FetchDockerNetwork:      envOrDefault("CP_FETCH_DOCKER_NETWORK", "bridge"),
+		FetchDockerCPUs:         envOrDefault("CP_FETCH_DOCKER_CPUS", "1"),
+		FetchDockerMemory:       envOrDefault("CP_FETCH_DOCKER_MEMORY", "1g"),
+		FetchDockerMemorySwap:   envOrDefault("CP_FETCH_DOCKER_MEMORY_SWAP", "1g"),
+		FetchDockerPidsLimit:    intEnv("CP_FETCH_DOCKER_PIDS_LIMIT", 128),
 		CommandRunnerProvider:   envOrDefault("CP_BUILD_COMMAND_RUNNER_PROVIDER", "docker"),
 		BuildDockerImage:        envOrDefault("CP_BUILD_DOCKER_IMAGE", "node:20-bookworm"),
 		BuildDockerInstallNet:   envOrDefault("CP_BUILD_DOCKER_INSTALL_NETWORK", "bridge"),
 		BuildDockerBuildNet:     envOrDefault("CP_BUILD_DOCKER_BUILD_NETWORK", "none"),
+		BuildDockerCPUs:         envOrDefault("CP_BUILD_DOCKER_CPUS", "2"),
+		BuildDockerMemory:       envOrDefault("CP_BUILD_DOCKER_MEMORY", "2g"),
+		BuildDockerMemorySwap:   envOrDefault("CP_BUILD_DOCKER_MEMORY_SWAP", "2g"),
 		BuildDockerPidsLimit:    intEnv("CP_BUILD_DOCKER_PIDS_LIMIT", 256),
 		AllowedDockerImages:     csvEnv("CP_BUILD_DOCKER_ALLOWED_IMAGES", []string{"node:20-bookworm"}),
 		ArtifactStoreProvider:   envOrDefault("CP_ARTIFACT_STORE_PROVIDER", "local"),
@@ -77,11 +99,36 @@ func LoadFromEnv() (Config, error) {
 	if cfg.PullMaxAttempts < 1 {
 		return Config{}, fmt.Errorf("CP_CLOUDFLARE_PULL_MAX_ATTEMPTS must be >= 1")
 	}
+	if cfg.PullMaxConcurrentBuilds < 1 {
+		return Config{}, fmt.Errorf("CP_CLOUDFLARE_PULL_MAX_CONCURRENT_BUILDS must be >= 1")
+	}
 	if cfg.BuildDockerPidsLimit < 1 {
 		return Config{}, fmt.Errorf("CP_BUILD_DOCKER_PIDS_LIMIT must be >= 1")
 	}
-	if cfg.CommandRunnerProvider == "docker" && len(cfg.AllowedDockerImages) > 0 && !slices.Contains(cfg.AllowedDockerImages, cfg.BuildDockerImage) {
-		return Config{}, fmt.Errorf("CP_BUILD_DOCKER_IMAGE must be present in CP_BUILD_DOCKER_ALLOWED_IMAGES")
+	if cfg.FetchDockerPidsLimit < 1 {
+		return Config{}, fmt.Errorf("CP_FETCH_DOCKER_PIDS_LIMIT must be >= 1")
+	}
+	fetchCPUs, err := strconv.ParseFloat(cfg.FetchDockerCPUs, 64)
+	if err != nil || fetchCPUs <= 0 {
+		return Config{}, fmt.Errorf("CP_FETCH_DOCKER_CPUS must be a positive number")
+	}
+	cpus, err := strconv.ParseFloat(cfg.BuildDockerCPUs, 64)
+	if err != nil || cpus <= 0 {
+		return Config{}, fmt.Errorf("CP_BUILD_DOCKER_CPUS must be a positive number")
+	}
+	if cfg.FetchDockerCPUs == "" || cfg.FetchDockerMemory == "" {
+		return Config{}, fmt.Errorf("CP_FETCH_DOCKER_CPUS and CP_FETCH_DOCKER_MEMORY are required")
+	}
+	if cfg.BuildDockerCPUs == "" || cfg.BuildDockerMemory == "" {
+		return Config{}, fmt.Errorf("CP_BUILD_DOCKER_CPUS and CP_BUILD_DOCKER_MEMORY are required")
+	}
+	if len(cfg.AllowedDockerImages) > 0 {
+		if cfg.CommandRunnerProvider == "docker" && !slices.Contains(cfg.AllowedDockerImages, cfg.BuildDockerImage) {
+			return Config{}, fmt.Errorf("CP_BUILD_DOCKER_IMAGE must be present in CP_BUILD_DOCKER_ALLOWED_IMAGES")
+		}
+		if cfg.SourceFetcherProvider == "docker" && !slices.Contains(cfg.AllowedDockerImages, cfg.FetchDockerImage) {
+			return Config{}, fmt.Errorf("CP_FETCH_DOCKER_IMAGE must be present in CP_BUILD_DOCKER_ALLOWED_IMAGES")
+		}
 	}
 
 	return cfg, nil

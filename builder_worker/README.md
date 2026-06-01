@@ -27,6 +27,7 @@ The current Go port now supports two execution modes behind the same handler:
   - runs install/build commands with live log streaming over the executor channel
   - validates the declared output directory
   - publishes the real built output through the artifact publisher
+  - can now isolate both source fetch and build execution through Docker-backed adapters
 
 Current limitation:
 
@@ -42,12 +43,12 @@ Current limitation:
   - `simulated` is useful for local contract checks
   - `actual` is the current real checkout/build path
 - current limitation:
-  - the `actual` executor now defaults to Docker for command execution
-  - the next hardening step is tightening container policy further, especially per-project image policy and stronger runtime limits
+  - the `actual` executor now defaults to Docker for both source fetch and command execution
+  - the next hardening step is tightening container policy further, especially per-project image policy and stronger duplicate-claim protection
 
 ## Layout
 
-- `cmd/cloudflare-builder-worker/`
+- `cmd/builder/`
   - process entrypoint and lifecycle wiring
 - `internal/config/`
   - environment-driven configuration
@@ -78,11 +79,21 @@ Current limitation:
 - `CP_INTERNAL_SERVICE_TOKEN`
 - `CP_CELERY_BUILDER_SERVICE_NAME`
 - `CP_BUILD_EXECUTOR_PROVIDER`
+- `CP_SOURCE_FETCHER_PROVIDER`
+- `CP_FETCH_DOCKER_IMAGE`
+- `CP_FETCH_DOCKER_NETWORK`
+- `CP_FETCH_DOCKER_CPUS`
+- `CP_FETCH_DOCKER_MEMORY`
+- `CP_FETCH_DOCKER_MEMORY_SWAP`
+- `CP_FETCH_DOCKER_PIDS_LIMIT`
 - `CP_BUILD_COMMAND_RUNNER_PROVIDER`
 - `CP_BUILD_DOCKER_IMAGE`
 - `CP_BUILD_DOCKER_ALLOWED_IMAGES`
 - `CP_BUILD_DOCKER_INSTALL_NETWORK`
 - `CP_BUILD_DOCKER_BUILD_NETWORK`
+- `CP_BUILD_DOCKER_CPUS`
+- `CP_BUILD_DOCKER_MEMORY`
+- `CP_BUILD_DOCKER_MEMORY_SWAP`
 - `CP_BUILD_DOCKER_PIDS_LIMIT`
 - `CP_ARTIFACT_STORE_PROVIDER`
 - `CP_ARTIFACT_STORE_ROOT`
@@ -92,7 +103,8 @@ Current limitation:
 - `CP_R2_SESSION_TOKEN`
 - `CP_R2_REGION_NAME`
 
-The `actual` executor now defaults to a Docker-backed command runner in the
-factory path. The next step is to harden that container runtime further with
-tighter image policy, network controls, and workspace hygiene while keeping the
-queue client, handler, and log-forwarding contracts stable.
+The `actual` executor now defaults to Docker-backed source fetch and command
+execution in the factory path. The next step is to harden that runtime further
+with tighter image policy, stronger duplicate-claim protection, and continued
+workspace hygiene while keeping the queue client, handler, and log-forwarding
+contracts stable.
