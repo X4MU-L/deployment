@@ -11,3 +11,7 @@ DS_Store
 .idea/
 .venv/
 *.db
+*.sqlite
+.artifacts/
+.gocache/
+.gotmp/
