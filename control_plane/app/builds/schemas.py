@@ -31,6 +31,16 @@ class BuildStatusUpdate(BaseModel):
     error_message: str | None = None
 
 
+class BuildClaimRequest(BaseModel):
+    lease_seconds: int = 900
+
+
+class BuildClaimResponse(BaseModel):
+    claimed: bool
+    reason: str | None = None
+    build: "BuildResponse"
+
+
 class BuildResponse(BaseModel):
     id: str
     project_id: str
@@ -48,6 +58,8 @@ class BuildResponse(BaseModel):
     env_snapshot: dict | None = None
     planned_release_id: str | None = None
     builder_adapter: str | None = None
+    claimed_by_service: str | None = None
+    claim_expires_at: datetime | None = None
     queue_job_id: str | None = None  # adapter-specific async job reference
     artifact_ref: str | None
     error_message: str | None

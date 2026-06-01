@@ -1,8 +1,22 @@
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
 from app.audit.service import AuditService
 from app.background_builder.base import BackgroundBuilder, BackgroundBuildRequest
 from app.builds.repository import BuildRepository
-from app.builds.schemas import BuildCreate, BuildTransition, BuildTriggerRequest
-from app.core.exceptions import InvalidTransitionError, NotFoundError, ServiceUnavailableError
+from app.builds.schemas import (
+    BuildClaimResponse,
+    BuildCreate,
+    BuildResponse,
+    BuildTransition,
+    BuildTriggerRequest,
+)
+from app.core.exceptions import (
+    BadRequestError,
+    InvalidTransitionError,
+    NotFoundError,
+    ServiceUnavailableError,
+)
 from app.environments.repository import EnvironmentRepository
 from app.projects.repository import ProjectRepository
 
@@ -172,6 +186,54 @@ class BuildService:
             raise NotFoundError("Build", build_id)
         return self._to_dict(build)
 
+    async def claim_for_service(
+        self, build_id: str, service_name: str, lease_seconds: int
+    ) -> BuildClaimResponse:
+        if lease_seconds < 1:
+            raise BadRequestError("lease_seconds must be >= 1", code="INVALID_LEASE_SECONDS")
+
+        now = datetime.now(UTC).replace(tzinfo=None)
+        lease_expires_at = now + timedelta(seconds=lease_seconds)
+        build, claimed = await self._repo.claim(build_id, service_name, lease_expires_at, now)
+        build_dict = self._to_dict(build)
+        if claimed:
+            await self._audit.record(
+                actor_type="service",
+                actor_service=service_name,
+                action="build.claimed",
+                project_id=build.project_id,
+                build_id=build.id,
+                metadata={"lease_seconds": lease_seconds},
+            )
+            return BuildClaimResponse(claimed=True, build=BuildResponse(**build_dict))
+
+        reason = _claim_rejection_reason(build, now, service_name)
+        return BuildClaimResponse(claimed=False, reason=reason, build=BuildResponse(**build_dict))
+
+    async def renew_claim_for_service(
+        self, build_id: str, service_name: str, lease_seconds: int
+    ) -> BuildClaimResponse:
+        if lease_seconds < 1:
+            raise BadRequestError("lease_seconds must be >= 1", code="INVALID_LEASE_SECONDS")
+
+        now = datetime.now(UTC).replace(tzinfo=None)
+        lease_expires_at = now + timedelta(seconds=lease_seconds)
+        build, claimed = await self._repo.renew_claim(build_id, service_name, lease_expires_at, now)
+        build_dict = self._to_dict(build)
+        if claimed:
+            await self._audit.record(
+                actor_type="service",
+                actor_service=service_name,
+                action="build.claim_renewed",
+                project_id=build.project_id,
+                build_id=build.id,
+                metadata={"lease_seconds": lease_seconds},
+            )
+            return BuildClaimResponse(claimed=True, build=BuildResponse(**build_dict))
+
+        reason = _renewal_rejection_reason(build, now, service_name)
+        return BuildClaimResponse(claimed=False, reason=reason, build=BuildResponse(**build_dict))
+
     async def transition(self, build_id: str, data: BuildTransition) -> dict:
         build = await self._repo.get_by_id(build_id)
         if build is None:
@@ -181,11 +243,14 @@ class BuildService:
         if data.status not in allowed:
             raise InvalidTransitionError("Build", build.status, data.status)
 
-        fields = {"status": data.status}
+        fields: dict[str, Any] = {"status": data.status}
         if data.artifact_ref:
             fields["artifact_ref"] = data.artifact_ref
         if data.error_message:
             fields["error_message"] = data.error_message
+        if data.status in {"succeeded", "failed", "canceled"}:
+            fields["claimed_by_service"] = None
+            fields["claim_expires_at"] = None
 
         build = await self._repo.update(build_id, **fields)
         return self._to_dict(build)
@@ -209,6 +274,8 @@ class BuildService:
             "env_snapshot": getattr(b, "env_snapshot", None),
             "planned_release_id": getattr(b, "planned_release_id", None),
             "builder_adapter": getattr(b, "builder_adapter", None),
+            "claimed_by_service": getattr(b, "claimed_by_service", None),
+            "claim_expires_at": getattr(b, "claim_expires_at", None),
             "queue_job_id": getattr(b, "queue_job_id", None),
             "artifact_ref": b.artifact_ref,
             "error_message": b.error_message,
@@ -227,3 +294,28 @@ def _new_release_id() -> str:
     from uuid import uuid4
 
     return str(uuid4())
+
+
+def _claim_rejection_reason(build, now: datetime, service_name: str) -> str:
+    if build.status in {"succeeded", "failed", "canceled"}:
+        return "already_terminal"
+    if build.status == "running":
+        if getattr(build, "claimed_by_service", None) == service_name:
+            return "already_claimed_by_service"
+        claim_expires_at = getattr(build, "claim_expires_at", None)
+        if claim_expires_at is None or claim_expires_at > now:
+            return "lease_active"
+    return "not_claimable"
+
+
+def _renewal_rejection_reason(build, now: datetime, service_name: str) -> str:
+    if build.status in {"succeeded", "failed", "canceled"}:
+        return "already_terminal"
+    if build.status != "running":
+        return "not_running"
+    if getattr(build, "claimed_by_service", None) != service_name:
+        return "not_claim_owner"
+    claim_expires_at = getattr(build, "claim_expires_at", None)
+    if claim_expires_at is not None and claim_expires_at <= now:
+        return "lease_expired"
+    return "not_claimable"

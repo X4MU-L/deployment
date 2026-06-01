@@ -27,11 +27,13 @@ dependencies = [
     "opentelemetry-instrumentation-sqlalchemy>=0.63b1",
     "opentelemetry-sdk>=1.42.1",
     "celery>=5.6.3",
+    "boto3>=1.43.18",
 ]
 
 [project.scripts]
 fake-builder = "app.celery_builder.cli:main"
 fake-builder-worker = "app.celery_builder.worker_cli:main"
+cloudflare-builder-worker = "app.cloudflare_builder.pull_consumer:main"
 
 [build-system]
 requires = ["hatchling"]

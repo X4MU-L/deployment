@@ -1,4 +1,8 @@
-from sqlalchemy import select
+from datetime import datetime
+from typing import cast
+
+from sqlalchemy import and_, or_, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import NotFoundError
@@ -27,6 +31,20 @@ class BuildRepository:
         planned_release_id: str | None = None,
     ) -> Build: ...
     async def update(self, build_id: str, **fields) -> Build: ...
+    async def claim(
+        self,
+        build_id: str,
+        service_name: str,
+        lease_expires_at: datetime,
+        now: datetime,
+    ) -> tuple[Build, bool]: ...
+    async def renew_claim(
+        self,
+        build_id: str,
+        service_name: str,
+        lease_expires_at: datetime,
+        now: datetime,
+    ) -> tuple[Build, bool]: ...
 
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
@@ -107,8 +125,78 @@ class SqlAlchemyBuildRepository(BuildRepository):
         if build is None:
             raise NotFoundError("Build", build_id)
         for key, value in fields.items():
-            if value is not None and hasattr(build, key):
+            if hasattr(build, key):
                 setattr(build, key, value)
         await self._db.flush()
         await self._db.refresh(build)
         return build
+
+    async def claim(
+        self,
+        build_id: str,
+        service_name: str,
+        lease_expires_at: datetime,
+        now: datetime,
+    ) -> tuple[Build, bool]:
+        statement = (
+            update(Build)
+            .where(
+                Build.id == build_id,
+                or_(
+                    Build.status == "queued",
+                    and_(
+                        Build.status == "running",
+                        or_(
+                            Build.claimed_by_service == service_name,
+                            Build.claim_expires_at.is_(None),
+                            Build.claim_expires_at <= now,
+                        ),
+                    ),
+                ),
+            )
+            .values(
+                status="running",
+                claimed_by_service=service_name,
+                claim_expires_at=lease_expires_at,
+            )
+        )
+        result = await self._db.execute(statement)
+        # Cast the result to CursorResult to expose .rowcount
+        cursor_result = cast(CursorResult, result)
+        await self._db.flush()
+
+        build = await self.get_by_id(build_id)
+        if build is None:
+            raise NotFoundError("Build", build_id)
+        return build, cursor_result.rowcount > 0
+
+    async def renew_claim(
+        self,
+        build_id: str,
+        service_name: str,
+        lease_expires_at: datetime,
+        now: datetime,
+    ) -> tuple[Build, bool]:
+        statement = (
+            update(Build)
+            .where(
+                Build.id == build_id,
+                Build.status == "running",
+                Build.claimed_by_service == service_name,
+                or_(
+                    Build.claim_expires_at.is_(None),
+                    Build.claim_expires_at > now,
+                ),
+            )
+            .values(
+                claim_expires_at=lease_expires_at,
+            )
+        )
+        result = await self._db.execute(statement)
+        # Cast the result to CursorResult to expose .rowcount
+        cursor_result = cast(CursorResult, result)
+        await self._db.flush()
+        build = await self.get_by_id(build_id)
+        if build is None:
+            raise NotFoundError("Build", build_id)
+        return build, cursor_result.rowcount > 0

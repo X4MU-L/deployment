@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import logging
+
 from app.artifact_store.base import ArtifactStore
 from app.artifact_store.local import LocalArtifactStore
 from app.artifact_store.r2 import R2ArtifactStore
 from app.core.config import Settings
 
+logger = logging.getLogger(__name__)
+
 
 def build_artifact_store(settings: Settings) -> ArtifactStore:
+    logger.info("Initializing artifact store with provider %s", settings.artifact_store_provider)
     provider = settings.artifact_store_provider
     if provider == "local":
         return LocalArtifactStore(settings.artifact_store_root)

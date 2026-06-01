@@ -34,6 +34,7 @@ class R2ArtifactStore(ArtifactStore):
         self._client = client
 
     def publish_directory(self, *, bucket: str, prefix: str, source_dir: Path) -> list[str]:
+
         uploaded_paths: list[str] = []
         for path in sorted(source_dir.rglob("*")):
             if not path.is_file():

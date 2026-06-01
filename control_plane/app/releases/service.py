@@ -45,7 +45,8 @@ class ReleaseService:
     # --- Routes ---
     async def create_route(self, data: RouteCreate) -> dict:
         route = await self._repo.create_route(
-            hostname=data.hostname, release_id=data.release_id,
+            hostname=data.hostname,
+            release_id=data.release_id,
         )
         return self._route_to_dict(route)
 
@@ -59,20 +60,26 @@ class ReleaseService:
     @staticmethod
     def _release_to_dict(r) -> dict:
         return {
-            "id": r.id, "project_id": r.project_id,
-            "environment_id": r.environment_id, "build_id": r.build_id,
+            "id": r.id,
+            "project_id": r.project_id,
+            "environment_id": r.environment_id,
+            "build_id": r.build_id,
             "deployment_id": r.deployment_id,
             "artifact_ref": getattr(r, "artifact_ref", None),
             "manifest_ref": getattr(r, "manifest_ref", None),
-            "created_at": r.created_at, "updated_at": r.updated_at,
+            "created_at": r.created_at,
+            "updated_at": r.updated_at,
         }
 
     @staticmethod
     def _route_to_dict(r) -> dict:
         return {
-            "id": r.id, "hostname": r.hostname, "release_id": r.release_id,
+            "id": r.id,
+            "hostname": r.hostname,
+            "release_id": r.release_id,
             "invalidation_version": getattr(r, "invalidation_version", 1),
-            "created_at": r.created_at, "updated_at": r.updated_at,
+            "created_at": r.created_at,
+            "updated_at": r.updated_at,
         }
 
     async def activate_static_release(

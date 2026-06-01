@@ -2,10 +2,6 @@ from dataclasses import dataclass
 from typing import Annotated
 
 import redis.asyncio as redis
-from fastapi import Depends, Header, Request
-from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.artifact_store.base import ArtifactStore
 from app.artifact_store.factory import build_artifact_store
 from app.audit.repository import AuditRepository, SqlAlchemyAuditRepository
@@ -33,6 +29,9 @@ from app.projects.repository import ProjectRepository, SqlAlchemyProjectReposito
 from app.projects.service import ProjectService
 from app.releases.repository import ReleaseRepository, SqlAlchemyReleaseRepository
 from app.releases.service import ReleaseService
+from fastapi import Depends, Header, Request
+from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy.ext.asyncio import AsyncSession
 
 _oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
@@ -102,20 +101,6 @@ def _user_auth_service(
     return UserAuthService(repo)
 
 
-def _project_service(db: DbSession) -> ProjectService:
-    return ProjectService(_project_repo(db), _environment_repo(db), _audit_service(_audit_repo(db)))
-
-
-def _build_service(db: DbSession) -> BuildService:
-    return BuildService(
-        _build_repo(db),
-        _project_repo(db),
-        _environment_repo(db),
-        _audit_service(_audit_repo(db)),
-        _background_builder(),
-    )
-
-
 def _background_builder() -> BackgroundBuilder:
     return build_background_builder(get_settings())
 
@@ -130,10 +115,6 @@ def _deployment_service(repo: DeploymentRepoDep) -> DeploymentService:
 
 def _environment_service(repo: EnvironmentRepoDep) -> EnvironmentService:
     return EnvironmentService(repo)
-
-
-def _release_service(db: DbSession) -> ReleaseService:
-    return ReleaseService(_release_repo(db), _audit_service(_audit_repo(db)), _artifact_store())
 
 
 def _log_service(repo: LogRepoDep) -> LogService:
@@ -158,6 +139,10 @@ def _get_social_service() -> SocialOAuthService:
     return _get_social_service._instance  # type: ignore[attr-defined]
 
 
+ArtifectStoreDep = Annotated[ArtifactStore, Depends(_artifact_store)]
+BuilderServiceDep = Annotated[BackgroundBuilder, Depends(_background_builder)]
+
+
 # ---------------------------------------------------------------------------
 # Redis client provider
 # ---------------------------------------------------------------------------
@@ -176,15 +161,48 @@ def _redis_client(request: Request) -> redis.Redis:
     return client
 
 
+AuditServiceDep = Annotated[AuditService, Depends(_audit_service)]
+
+
+def _project_service(
+    project: ProjectRepoDep, environment: EnvironmentRepoDep, audit: AuditServiceDep
+) -> ProjectService:
+    return ProjectService(project, environment, audit)
+
+
+def _release_service(
+    release_repo: ReleaseRepoDep, audit: AuditServiceDep, artifact_store: ArtifectStoreDep
+) -> ReleaseService:
+    return ReleaseService(release_repo, audit, artifact_store)
+
+
+def _build_service(
+    build_repo: BuildRepoDep,
+    project_repo: ProjectRepoDep,
+    environment_repo: EnvironmentRepoDep,
+    audit_service: AuditServiceDep,
+    builder: BuilderServiceDep,
+) -> BuildService:
+    return BuildService(
+        build_repo,
+        project_repo,
+        environment_repo,
+        audit_service,
+        builder,
+    )
+
+
 TokenServiceDep = Annotated[TokenService, Depends(_token_service)]
 UserAuthServiceDep = Annotated[UserAuthService, Depends(_user_auth_service)]
-ProjectServiceDep = Annotated[ProjectService, Depends(_project_service)]
+
 BuildServiceDep = Annotated[BuildService, Depends(_build_service)]
 DeploymentServiceDep = Annotated[DeploymentService, Depends(_deployment_service)]
 EnvironmentServiceDep = Annotated[EnvironmentService, Depends(_environment_service)]
 ReleaseServiceDep = Annotated[ReleaseService, Depends(_release_service)]
 LogServiceDep = Annotated[LogService, Depends(_log_service)]
-AuditServiceDep = Annotated[AuditService, Depends(_audit_service)]
+
+
+ProjectServiceDep = Annotated[ProjectService, Depends(_project_service)]
 GithubServiceDep = Annotated[GithubService, Depends(_github_service)]
 SocialOAuthServiceDep = Annotated[SocialOAuthService, Depends(_get_social_service)]
 RedisDep = Annotated[redis.Redis, Depends(_redis_client)]
@@ -239,6 +257,9 @@ async def get_current_service(
             message="Service authorization required", code="SERVICE_AUTH_REQUIRED"
         )
     scheme, _, token = authorization.partition(" ")
+    print(
+        f"get_current_service: scheme={scheme}, token={token}, x_service_name={x_service_name} thrown away = {_}"
+    )
     if scheme.lower() != "bearer" or not token:
         raise UnauthorizedError(
             message="Invalid authorization header",

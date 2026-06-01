@@ -1,4 +1,6 @@
-from sqlalchemy import JSON, ForeignKey, String
+from datetime import datetime
+
+from sqlalchemy import JSON, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, BaseMixin
@@ -32,6 +34,8 @@ class Build(Base, BaseMixin):
     env_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     planned_release_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     builder_adapter: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    claimed_by_service: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True, index=True)
     queue_job_id: Mapped[str | None] = mapped_column(
         String(255), nullable=True, index=True
     )  # adapter-specific async job reference

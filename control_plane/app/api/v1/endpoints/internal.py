@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Query
 
 from app.builds.schemas import (
+    BuildClaimRequest,
+    BuildClaimResponse,
     BuildCompleteRequest,
     BuildResponse,
     BuildStatusUpdate,
@@ -27,6 +29,26 @@ async def get_build_for_service(
     svc: BuildServiceDep,
 ):
     return await svc.get_build_internal(build_id)
+
+
+@router.post("/builds/{build_id}/claim", response_model=BuildClaimResponse)
+async def claim_build_for_service(
+    build_id: str,
+    body: BuildClaimRequest,
+    service: CurrentService,
+    svc: BuildServiceDep,
+):
+    return await svc.claim_for_service(build_id, service.service_name, body.lease_seconds)
+
+
+@router.post("/builds/{build_id}/claim/renew", response_model=BuildClaimResponse)
+async def renew_build_claim_for_service(
+    build_id: str,
+    body: BuildClaimRequest,
+    service: CurrentService,
+    svc: BuildServiceDep,
+):
+    return await svc.renew_claim_for_service(build_id, service.service_name, body.lease_seconds)
 
 
 @router.post("/builds/{build_id}/status", response_model=BuildResponse)
