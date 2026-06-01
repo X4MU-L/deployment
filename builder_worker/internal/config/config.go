@@ -2,11 +2,14 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
 type Config struct {
@@ -53,6 +56,13 @@ type Config struct {
 }
 
 func LoadFromEnv() (Config, error) {
+
+	// Load the .env file
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+
 	cfg := Config{
 		CloudflareAPIBaseURL:    envOrDefault("CP_CLOUDFLARE_API_BASE_URL", "https://api.cloudflare.com/client/v4"),
 		CloudflareAccountID:     os.Getenv("CP_CLOUDFLARE_ACCOUNT_ID"),
@@ -158,6 +168,8 @@ func LoadFromEnv() (Config, error) {
 			return Config{}, fmt.Errorf("CP_FETCH_DOCKER_IMAGE must be present in CP_BUILD_DOCKER_ALLOWED_IMAGES")
 		}
 	}
+	
+
 
 	return cfg, nil
 }
