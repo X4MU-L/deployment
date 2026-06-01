@@ -11,6 +11,7 @@ import (
 	"builder_worker/internal/contracts"
 	"builder_worker/internal/controlplane"
 	"builder_worker/internal/executor"
+	"builder_worker/internal/logger"
 )
 
 const defaultBuildClaimLeaseSeconds = 900
@@ -133,10 +134,26 @@ func NewBuildHandlerWithDeps(controlPlaneClient ControlPlaneClient, buildExecuto
 }
 
 func (h *BuildHandler) Handle(ctx context.Context, message contracts.BuildRequestedMessage) error {
+	logger.Info(
+		"build handler started",
+		"build_id",
+		message.BuildID,
+		"project_id",
+		message.ProjectID,
+		"environment_id",
+		message.EnvironmentID,
+		"release_id",
+		message.ReleaseID,
+		"correlation_id",
+		message.CorrelationID,
+		"attempt",
+		message.Attempt,
+	)
 	claim, err := h.controlPlaneClient.ClaimBuild(ctx, message.BuildID, controlplane.BuildClaimRequest{
 		LeaseSeconds: h.claimLeaseSeconds,
 	})
 	if err != nil {
+		logger.Error("build handler claim request failed", "build_id", message.BuildID, "correlation_id", message.CorrelationID, "err", err)
 		return err
 	}
 	if !claim.Claimed {
@@ -144,9 +161,21 @@ func (h *BuildHandler) Handle(ctx context.Context, message contracts.BuildReques
 		if reason == "" {
 			reason = "not_claimable"
 		}
+		logger.Warn("build handler claim denied", "build_id", message.BuildID, "correlation_id", message.CorrelationID, "reason", reason)
 		return TerminalError(fmt.Errorf("build claim denied for %s: %s", message.BuildID, reason))
 	}
 	build := claim.Build
+	logger.Info(
+		"build handler claim acquired",
+		"build_id",
+		message.BuildID,
+		"status",
+		build.Status,
+		"project_id",
+		build.ProjectID,
+		"lease_seconds",
+		h.claimLeaseSeconds,
+	)
 
 	logCtx, stopLogs := context.WithCancel(ctx)
 	defer stopLogs()
@@ -160,6 +189,7 @@ func (h *BuildHandler) Handle(ctx context.Context, message contracts.BuildReques
 	if err := h.emitLifecycleLog(logCtx, logMessages, message, "claim.acquired", map[string]any{
 		"lease_seconds": h.claimLeaseSeconds,
 	}); err != nil {
+		logger.Error("build handler lifecycle log failed", "build_id", message.BuildID, "phase", "claim.acquired", "err", err)
 		close(logMessages)
 		<-forwardErrCh
 		return err
@@ -167,6 +197,7 @@ func (h *BuildHandler) Handle(ctx context.Context, message contracts.BuildReques
 	if err := h.emitLifecycleLog(logCtx, logMessages, message, "build.started", map[string]any{
 		"build_max_duration_seconds": int(h.buildMaxDuration / time.Second),
 	}); err != nil {
+		logger.Error("build handler lifecycle log failed", "build_id", message.BuildID, "phase", "build.started", "err", err)
 		close(logMessages)
 		<-forwardErrCh
 		return err
@@ -174,6 +205,7 @@ func (h *BuildHandler) Handle(ctx context.Context, message contracts.BuildReques
 
 	execCtx, cancel := context.WithTimeout(ctx, h.buildMaxDuration)
 	defer cancel()
+	logger.Info("build handler executor starting", "build_id", message.BuildID, "correlation_id", message.CorrelationID, "max_duration", h.buildMaxDuration)
 
 	renewErrCh := make(chan error, 1)
 	go func() {
@@ -184,6 +216,23 @@ func (h *BuildHandler) Handle(ctx context.Context, message contracts.BuildReques
 		Build:   build,
 		Message: message,
 	}, logMessages)
+	logger.Info(
+		"build handler executor finished",
+		"build_id",
+		message.BuildID,
+		"correlation_id",
+		message.CorrelationID,
+		"status",
+		result.Status,
+		"ErrorMessage",
+		result.ErrorMessage,
+		"artifact_ref",
+		result.ArtifactRef,
+		"manifest_ref",
+		result.ManifestRef,
+		"execute_err",
+		executeErr,
+	)
 	cancel()
 	renewErr := <-renewErrCh
 
@@ -203,21 +252,54 @@ func (h *BuildHandler) Handle(ctx context.Context, message contracts.BuildReques
 	close(logMessages)
 	forwardErr := <-forwardErrCh
 	stopLogs()
+	logger.Info(
+		"build handler log forwarding finished",
+		"build_id",
+		message.BuildID,
+		"correlation_id",
+		message.CorrelationID,
+		"execute_err",
+		executeErr,
+		"renew_err",
+		renewErr,
+		"forward_err",
+		forwardErr,
+	)
 
 	if err := joinNonNil(
 		prioritizeRenewalError(executeErr, renewErr),
 		lifecycleErr,
 		forwardErr,
 	); err != nil {
+		logger.Error("build handler failed", "build_id", message.BuildID, "correlation_id", message.CorrelationID, "err", err)
 		return err
 	}
 
-	return h.controlPlaneClient.CompleteBuild(ctx, message.BuildID, controlplane.BuildCompleteRequest{
+	logger.Info(
+		"build handler reporting completion",
+		"build_id",
+		message.BuildID,
+		"correlation_id",
+		message.CorrelationID,
+		"status",
+		result.Status,
+		"artifact_ref",
+		result.ArtifactRef,
+		"manifest_ref",
+		result.ManifestRef,
+	)
+	if err := h.controlPlaneClient.CompleteBuild(ctx, message.BuildID, controlplane.BuildCompleteRequest{
 		Status:       result.Status,
 		ArtifactRef:  result.ArtifactRef,
 		ManifestRef:  result.ManifestRef,
 		ErrorMessage: result.ErrorMessage,
-	})
+	}); err != nil {
+		logger.Error("build handler completion callback failed", "build_id", message.BuildID, "correlation_id", message.CorrelationID, "err", err)
+		return err
+	}
+
+	logger.Info("build handler completed", "build_id", message.BuildID, "correlation_id", message.CorrelationID, "status", result.Status)
+	return nil
 }
 
 func (h *BuildHandler) renewClaimLoop(
@@ -239,6 +321,7 @@ func (h *BuildHandler) renewClaimLoop(
 			})
 			if err != nil {
 				cancel()
+				logger.Error("build handler claim renewal failed", "build_id", message.BuildID, "correlation_id", message.CorrelationID, "err", err)
 				return fmt.Errorf("renew build claim: %w", err)
 			}
 			if !response.Claimed {
@@ -247,8 +330,10 @@ func (h *BuildHandler) renewClaimLoop(
 				if reason == "" {
 					reason = "not_claimable"
 				}
+				logger.Warn("build handler claim renewal denied", "build_id", message.BuildID, "correlation_id", message.CorrelationID, "reason", reason)
 				return fmt.Errorf("renew build claim denied for %s: %s", message.BuildID, reason)
 			}
+			logger.Debug("build handler claim renewed", "build_id", message.BuildID, "correlation_id", message.CorrelationID, "lease_seconds", h.claimLeaseSeconds)
 			if err := h.emitLifecycleLog(ctx, logSink, message, "claim.renewed", map[string]any{
 				"lease_seconds": h.claimLeaseSeconds,
 			}); err != nil {

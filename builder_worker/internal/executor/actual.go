@@ -191,6 +191,7 @@ func (e *ActualBuildExecutor) Execute(ctx context.Context, request BuildExecutio
 		if err := emitLog(ctx, logSink, "stdout", fmt.Sprintf("install: running %s", installCommand)); err != nil {
 			return BuildExecutionResult{}, err
 		}
+
 		if err := e.runner.Run(ctx, CommandRunRequest{
 			Phase:   "install",
 			Command: installCommand,
@@ -235,6 +236,9 @@ func (e *ActualBuildExecutor) Execute(ctx context.Context, request BuildExecutio
 			ErrorMessage: err.Error(),
 		}, nil
 	}
+	if err := emitLog(ctx, logSink, "stdout", "build: command completed successfully"); err != nil {
+		return BuildExecutionResult{}, err
+	}
 
 	outputRoot, err := resolveWorkspaceSubdir(buildRoot, outputDirectory)
 	if err != nil {
@@ -246,9 +250,12 @@ func (e *ActualBuildExecutor) Execute(ctx context.Context, request BuildExecutio
 			ErrorMessage: fmt.Sprintf("invalid output directory: %v", err),
 		}, nil
 	}
+	if err := emitLog(ctx, logSink, "stdout", fmt.Sprintf("output: validating configured output directory %s", outputDirectory)); err != nil {
+		return BuildExecutionResult{}, err
+	}
 	info, err := os.Stat(outputRoot)
 	if err != nil || !info.IsDir() {
-		errorMessage := fmt.Sprintf("output directory %s was not produced by the build", outputDirectory)
+		errorMessage := missingOutputDirectoryMessage(buildRoot, outputDirectory)
 		if statErr := emitLog(ctx, logSink, "stderr", "error: "+errorMessage); statErr != nil {
 			return BuildExecutionResult{}, statErr
 		}
@@ -256,6 +263,12 @@ func (e *ActualBuildExecutor) Execute(ctx context.Context, request BuildExecutio
 			Status:       "failed",
 			ErrorMessage: errorMessage,
 		}, nil
+	}
+	if err := emitLog(ctx, logSink, "stdout", fmt.Sprintf("output: found configured output directory %s", outputDirectory)); err != nil {
+		return BuildExecutionResult{}, err
+	}
+	if err := emitLog(ctx, logSink, "stdout", "upload: publishing static release artifacts"); err != nil {
+		return BuildExecutionResult{}, err
 	}
 
 	published, err := e.publisher.PublishStaticReleaseFromDirectory(artifacts.PublishInput{
@@ -395,6 +408,7 @@ func (f *DockerGitSourceFetcher) Fetch(ctx context.Context, request SourceFetchR
 	if ref == "" {
 		ref = "HEAD"
 	}
+	mountSource := resolveDockerMountSource(tempDir)
 
 	script := strings.Join([]string{
 		"set -euo pipefail",
@@ -410,7 +424,7 @@ func (f *DockerGitSourceFetcher) Fetch(ctx context.Context, request SourceFetchR
 		"--workdir",
 		"/workspace",
 		"--volume",
-		tempDir + ":/workspace",
+		mountSource + ":/workspace",
 		"--tmpfs",
 		"/tmp",
 		"--env",
@@ -518,13 +532,14 @@ func NewDockerCommandRunnerWithConfig(config DockerRunnerConfig) *DockerCommandR
 }
 
 func (r *DockerCommandRunner) Run(ctx context.Context, request CommandRunRequest, logSink chan<- BuildLogMessage) error {
+	mountSource := resolveDockerMountSource(request.WorkDir)
 	args := []string{
 		"run",
 		"--rm",
 		"--workdir",
 		"/workspace",
 		"--volume",
-		request.WorkDir + ":/workspace",
+		mountSource + ":/workspace",
 		"--tmpfs",
 		"/tmp",
 		"--env",
@@ -564,6 +579,24 @@ func (r *DockerCommandRunner) Run(ctx context.Context, request CommandRunRequest
 	}
 	args = append(args, r.config.Image, "sh", "-lc", request.Command)
 
+	if err := emitLog(
+		ctx,
+		logSink,
+		"stdout",
+		fmt.Sprintf(
+			"docker: phase=%s image=%s network=%s mount=%s workdir=/workspace read_only=%t user=%s env_count=%d",
+			request.Phase,
+			r.config.Image,
+			r.networkModeForPhase(request.Phase),
+			mountSource,
+			r.config.ReadOnlyRootFS,
+			r.userForContainer(),
+			len(request.Env)+2,
+		),
+	); err != nil {
+		return err
+	}
+
 	command := r.newExecCommand(ctx, "docker", args...)
 	return runStreamingCommand(ctx, command, request.Phase, logSink)
 }
@@ -580,6 +613,13 @@ func (r *DockerCommandRunner) networkModeForPhase(phase string) string {
 		}
 		return r.config.InstallNetwork
 	}
+}
+
+func (r *DockerCommandRunner) userForContainer() string {
+	if !r.config.MapHostUser {
+		return "default"
+	}
+	return formatHostUser()
 }
 
 type lineEmitter struct {
@@ -644,6 +684,67 @@ func envSnapshotToStrings(snapshot map[string]any) map[string]string {
 		env[key] = stringValue
 	}
 	return env
+}
+
+func missingOutputDirectoryMessage(buildRoot string, outputDirectory string) string {
+	message := fmt.Sprintf("output directory %s was not produced by the build", outputDirectory)
+	candidates := detectOutputDirectoryCandidates(buildRoot, outputDirectory)
+	if len(candidates) == 0 {
+		return message
+	}
+	return fmt.Sprintf("%s; found %s", message, strings.Join(candidates, ", "))
+}
+
+func detectOutputDirectoryCandidates(buildRoot string, expected string) []string {
+	entries, err := os.ReadDir(buildRoot)
+	if err != nil {
+		return nil
+	}
+
+	expectedBase := filepath.Base(filepath.Clean(expected))
+	preferred := []string{"dist", "build", "public", "www"}
+	result := make([]string, 0, len(preferred))
+	seen := make(map[string]struct{})
+
+	for _, candidate := range preferred {
+		if candidate == expectedBase {
+			continue
+		}
+		entry, ok := findDirEntry(entries, candidate)
+		if !ok || !entry.IsDir() {
+			continue
+		}
+		result = append(result, candidate)
+		seen[candidate] = struct{}{}
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if name == expectedBase {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		result = append(result, name)
+		if len(result) >= 4 {
+			break
+		}
+	}
+
+	return result
+}
+
+func findDirEntry(entries []os.DirEntry, target string) (os.DirEntry, bool) {
+	for _, entry := range entries {
+		if entry.Name() == target {
+			return entry, true
+		}
+	}
+	return nil, false
 }
 
 func buildEnvList(env map[string]string) []string {
@@ -721,6 +822,18 @@ func firstError(errors ...error) error {
 
 func formatHostUser() string {
 	return strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid())
+}
+
+func resolveDockerMountSource(path string) string {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil && resolved != "" {
+		return resolved
+	}
+	absolute, err := filepath.Abs(path)
+	if err == nil && absolute != "" {
+		return absolute
+	}
+	return path
 }
 
 func runStreamingCommand(ctx context.Context, command *exec.Cmd, phase string, logSink chan<- BuildLogMessage) error {

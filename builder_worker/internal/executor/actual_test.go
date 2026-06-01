@@ -72,8 +72,8 @@ func TestActualBuildExecutorFailsWhenOutputDirectoryMissing(t *testing.T) {
 	message.GitCheckout.RepoURL = repoDir
 	message.GitCheckout.CommitSHA = commitSHA
 	message.BuildSpec.InstallCommand = "printf 'install ok\\n'"
-	message.BuildSpec.BuildCommand = "printf 'build ok\\n'"
-	message.BuildSpec.OutputDirectory = "dist"
+	message.BuildSpec.BuildCommand = "mkdir -p dist && printf 'build ok\\n'"
+	message.BuildSpec.OutputDirectory = "out"
 
 	result, err := buildExecutor.Execute(context.Background(), BuildExecutionRequest{
 		Build:   buildResponse(),
@@ -87,10 +87,13 @@ func TestActualBuildExecutorFailsWhenOutputDirectoryMissing(t *testing.T) {
 	if result.Status != "failed" {
 		t.Fatalf("unexpected status: %#v", result)
 	}
-	if !strings.Contains(result.ErrorMessage, "output directory dist was not produced") {
+	if !strings.Contains(result.ErrorMessage, "output directory out was not produced") {
 		t.Fatalf("unexpected error message: %s", result.ErrorMessage)
 	}
-	assertContainsLog(t, emitted, "error: output directory dist was not produced by the build")
+	if !strings.Contains(result.ErrorMessage, "found dist") {
+		t.Fatalf("expected output hint in error message, got %s", result.ErrorMessage)
+	}
+	assertContainsLog(t, emitted, "error: output directory out was not produced by the build; found dist")
 }
 
 func TestActualBuildExecutorRejectsUnsupportedRepoURL(t *testing.T) {
@@ -247,6 +250,7 @@ func TestDockerCommandRunnerBuildsExpectedDockerInvocation(t *testing.T) {
 	assertStringSliceContains(t, capturedArgs, "CI=true")
 	assertStringSliceContains(t, capturedArgs, "node:22-bookworm")
 	assertStringSliceContains(t, capturedArgs, "npm run build")
+	assertContainsLog(t, emitted, "docker: phase=build image=node:22-bookworm")
 	assertContainsLog(t, emitted, "docker ok")
 }
 
@@ -321,6 +325,40 @@ func TestDockerCommandRunnerUsesPhaseSpecificBuildNetwork(t *testing.T) {
 
 	assertStringSliceContains(t, capturedArgs, "--network")
 	assertStringSliceContains(t, capturedArgs, "none")
+}
+
+func TestDockerCommandRunnerResolvesSymlinkedMountSource(t *testing.T) {
+	logs := make(chan BuildLogMessage, 16)
+	realDir := t.TempDir()
+	linkPath := filepath.Join(t.TempDir(), "workspace-link")
+	if err := os.Symlink(realDir, linkPath); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+
+	var capturedArgs []string
+	runner := NewDockerCommandRunnerWithConfig(DockerRunnerConfig{
+		Image:          "custom-image",
+		InstallNetwork: "bridge",
+		BuildNetwork:   "none",
+	})
+	runner.newExecCommand = func(_ context.Context, _ string, args ...string) *exec.Cmd {
+		capturedArgs = append([]string{}, args...)
+		return exec.Command("sh", "-lc", "printf 'docker ok\\n'")
+	}
+
+	err := runner.Run(context.Background(), CommandRunRequest{
+		Phase:   "install",
+		Command: "npm ci",
+		WorkDir: linkPath,
+	}, logs)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	emitted := drainLogMessages(logs)
+	expectedMount := resolveDockerMountSource(realDir)
+	assertStringSliceContains(t, capturedArgs, expectedMount+":/workspace")
+	assertContainsLog(t, emitted, "mount="+expectedMount)
 }
 
 type capturingPublisher struct {

@@ -5,6 +5,7 @@ import (
 
 	"builder_worker/internal/controlplane"
 	"builder_worker/internal/executor"
+	"builder_worker/internal/logger"
 )
 
 type BuildLogForwarder interface {
@@ -24,6 +25,7 @@ func (f *ControlPlaneLogForwarder) Forward(ctx context.Context, buildID string, 
 	var firstErr error
 
 	for message := range messages {
+		logForwardedMessage(buildID, message)
 		if firstErr != nil {
 			continue
 		}
@@ -39,4 +41,15 @@ func (f *ControlPlaneLogForwarder) Forward(ctx context.Context, buildID string, 
 	}
 
 	return firstErr
+}
+
+func logForwardedMessage(buildID string, message executor.BuildLogMessage) {
+	switch message.Stream {
+	case "stderr":
+		logger.Warn("build stream", "build_id", buildID, "stream", message.Stream, "line", logger.Literal(message.Line))
+	case "system":
+		logger.Info("build stream", "build_id", buildID, "stream", message.Stream, "line", logger.Literal(message.Line))
+	default:
+		logger.Info("build stream", "build_id", buildID, "stream", message.Stream, "line", logger.Literal(message.Line))
+	}
 }

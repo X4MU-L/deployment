@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"builder_worker/internal/logger"
 )
 
 type Client struct {
@@ -118,11 +120,24 @@ func (c *Client) doJSON(ctx context.Context, method string, path string, payload
 		request.Header.Set("Content-Type", "application/json")
 	}
 
+	start := time.Now()
 	response, err := c.httpClient.Do(request)
 	if err != nil {
 		return fmt.Errorf("send request: %w", err)
 	}
 	defer response.Body.Close()
+
+	logger.Debug(
+		"control plane request completed",
+		"method",
+		method,
+		"path",
+		path,
+		"status_code",
+		response.StatusCode,
+		"duration_ms",
+		time.Since(start).Milliseconds(),
+	)
 
 	if response.StatusCode >= 400 {
 		responseBody, _ := io.ReadAll(response.Body)

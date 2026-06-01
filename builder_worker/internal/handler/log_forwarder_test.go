@@ -52,3 +52,22 @@ func TestControlPlaneLogForwarderDrainsAfterFirstError(t *testing.T) {
 		t.Fatalf("forwarder should stop sending after first failure, got %d requests", len(controlPlane.logRequests))
 	}
 }
+
+func TestControlPlaneLogForwarderPreservesANSIEscapeCodesForIngest(t *testing.T) {
+	controlPlane := &stubControlPlaneClient{}
+	forwarder := NewControlPlaneLogForwarder(controlPlane)
+	messages := make(chan executor.BuildLogMessage, 1)
+
+	messages <- executor.BuildLogMessage{Stream: "stdout", Line: "\x1b[32m✓ built in 4.14s\x1b[39m"}
+	close(messages)
+
+	if err := forwarder.Forward(context.Background(), "build-1", messages); err != nil {
+		t.Fatalf("Forward returned error: %v", err)
+	}
+	if len(controlPlane.logRequests) != 1 {
+		t.Fatalf("expected 1 log request, got %d", len(controlPlane.logRequests))
+	}
+	if controlPlane.logRequests[0].Lines[0] != "\x1b[32m✓ built in 4.14s\x1b[39m" {
+		t.Fatalf("unexpected forwarded log line: %#v", controlPlane.logRequests[0].Lines[0])
+	}
+}

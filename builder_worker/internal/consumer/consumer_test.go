@@ -40,6 +40,29 @@ func TestRunOnceAcknowledgesSuccessfulMessage(t *testing.T) {
 	}
 }
 
+func TestRunOnceHandlesRawJSONQueueBody(t *testing.T) {
+	queueClient := &stubQueueClient{
+		pulls: [][]queue.PulledMessage{{
+			buildRequestedMessageRawJSON(t, "lease-raw", 1),
+		}},
+	}
+	handler := &stubHandler{}
+	consumer := New(Config{
+		BatchSize:           5,
+		VisibilityTimeoutMS: 30000,
+		MaxAttempts:         3,
+		MaxConcurrentBuilds: 2,
+	}, queueClient, handler)
+
+	runUntilSettled(t, consumer, 4)
+	if len(handler.handledBuildIDs) != 1 || handler.handledBuildIDs[0] != "build-1" {
+		t.Fatalf("unexpected handled build ids: %#v", handler.handledBuildIDs)
+	}
+	if len(queueClient.ackLeaseIDs) != 1 || queueClient.ackLeaseIDs[0] != "lease-raw" {
+		t.Fatalf("unexpected ack lease ids: %#v", queueClient.ackLeaseIDs)
+	}
+}
+
 func TestRunOnceRetriesTransientHandlerFailure(t *testing.T) {
 	queueClient := &stubQueueClient{
 		pulls: [][]queue.PulledMessage{{
@@ -323,6 +346,32 @@ func buildRequestedMessage(t *testing.T, leaseID string, attempts int) queue.Pul
 
 func buildRequestedMessageWithBuildID(t *testing.T, leaseID string, attempts int, buildID string) queue.PulledMessage {
 	t.Helper()
+	encoded := encodedBuildRequestedMessage(t, buildID)
+	return queue.PulledMessage{
+		Body:        base64.StdEncoding.EncodeToString(encoded),
+		ID:          "msg-" + leaseID,
+		TimestampMS: 1710950954154,
+		Attempts:    attempts,
+		LeaseID:     leaseID,
+		Metadata:    map[string]any{"CF-Content-Type": "json"},
+	}
+}
+
+func buildRequestedMessageRawJSON(t *testing.T, leaseID string, attempts int) queue.PulledMessage {
+	t.Helper()
+	encoded := encodedBuildRequestedMessage(t, "build-1")
+	return queue.PulledMessage{
+		Body:        string(encoded),
+		ID:          "msg-" + leaseID,
+		TimestampMS: 1710950954154,
+		Attempts:    attempts,
+		LeaseID:     leaseID,
+		Metadata:    map[string]any{"CF-Content-Type": "json"},
+	}
+}
+
+func encodedBuildRequestedMessage(t *testing.T, buildID string) []byte {
+	t.Helper()
 	payload := map[string]any{
 		"schema":         "build.requested.v1",
 		"build_id":       buildID,
@@ -348,14 +397,7 @@ func buildRequestedMessageWithBuildID(t *testing.T, leaseID string, attempts int
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
 	}
-	return queue.PulledMessage{
-		Body:        base64.StdEncoding.EncodeToString(encoded),
-		ID:          "msg-" + leaseID,
-		TimestampMS: 1710950954154,
-		Attempts:    attempts,
-		LeaseID:     leaseID,
-		Metadata:    map[string]any{"CF-Content-Type": "json"},
-	}
+	return encoded
 }
 
 type mapHandler struct {

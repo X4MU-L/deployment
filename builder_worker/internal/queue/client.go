@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"builder_worker/internal/logger"
 )
 
 type Config struct {
@@ -43,12 +45,17 @@ func (m PulledMessage) DecodeJSON(target any) error {
 		return json.Unmarshal([]byte(m.Body), target)
 	}
 
+	if m.ContentType() != "json" {
+		return fmt.Errorf("unsupported queue content type: %s", m.ContentType())
+	}
+
+	if err := json.Unmarshal([]byte(m.Body), target); err == nil {
+		return nil
+	}
+
 	decoded, err := base64.StdEncoding.DecodeString(m.Body)
 	if err != nil {
 		return fmt.Errorf("decode queue body: %w", err)
-	}
-	if m.ContentType() != "json" {
-		return fmt.Errorf("unsupported queue content type: %s", m.ContentType())
 	}
 	if err := json.Unmarshal(decoded, target); err != nil {
 		return fmt.Errorf("unmarshal queue body: %w", err)
@@ -92,6 +99,30 @@ func (c *HTTPClient) PullMessages(ctx context.Context, batchSize int, visibility
 	if !response.Success {
 		return nil, fmt.Errorf("cloudflare queue pull failed")
 	}
+	logger.Debug(
+		"queue pull completed",
+		"batch_size",
+		batchSize,
+		"visibility_timeout_ms",
+		visibilityTimeoutMS,
+		"received",
+		len(response.Result.Messages),
+	)
+	for _, message := range response.Result.Messages {
+		logger.Debug(
+			"queue message received",
+			"message_id",
+			message.ID,
+			"lease_id",
+			message.LeaseID,
+			"attempts",
+			message.Attempts,
+			"content_type",
+			message.ContentType(),
+			"timestamp_ms",
+			message.TimestampMS,
+		)
+	}
 	return response.Result.Messages, nil
 }
 
@@ -109,6 +140,13 @@ func (c *HTTPClient) Acknowledge(ctx context.Context, acks []string, retries []s
 	if !response.Success {
 		return fmt.Errorf("cloudflare queue ack failed")
 	}
+	logger.Info(
+		"queue acknowledge completed",
+		"ack_count",
+		len(acks),
+		"retry_count",
+		len(retries),
+	)
 	return nil
 }
 
@@ -144,11 +182,22 @@ func (c *HTTPClient) post(ctx context.Context, suffix string, payload any, targe
 	request.Header.Set("Authorization", "Bearer "+c.config.APIToken)
 	request.Header.Set("Content-Type", "application/json")
 
+	start := time.Now()
 	response, err := c.httpClient.Do(request)
 	if err != nil {
 		return fmt.Errorf("send queue request: %w", err)
 	}
 	defer response.Body.Close()
+
+	logger.Debug(
+		"queue request completed",
+		"suffix",
+		suffix,
+		"status_code",
+		response.StatusCode,
+		"duration_ms",
+		time.Since(start).Milliseconds(),
+	)
 
 	if response.StatusCode >= 400 {
 		responseBody, _ := io.ReadAll(response.Body)

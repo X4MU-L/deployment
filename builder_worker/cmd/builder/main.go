@@ -3,7 +3,8 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"fmt"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"builder_worker/internal/config"
 	"builder_worker/internal/consumer"
 	"builder_worker/internal/handler"
+	"builder_worker/internal/logger"
 	"builder_worker/internal/queue"
 )
 
@@ -20,8 +22,32 @@ func main() {
 	// internal tokens, etc. that we don't want to pass as command line arguments
 	cfg, err := config.LoadFromEnv()
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		fmt.Fprintf(os.Stderr, "load config: %v\n", err)
+		os.Exit(1)
 	}
+	logger.Init(logger.Config{
+		Level:     cfg.LogLevel,
+		ColorMode: cfg.LogColor,
+	})
+	logger.Info(
+		"builder worker configuration loaded",
+		"build_executor_provider",
+		cfg.BuildExecutorProvider,
+		"artifact_store_provider",
+		cfg.ArtifactStoreProvider,
+		"command_runner_provider",
+		cfg.CommandRunnerProvider,
+		"r2_endpoint_url",
+		cfg.R2EndpointURL,
+		"cloudflare_queue_id",
+		cfg.CloudflareQueueID,
+		"log_level",
+		cfg.LogLevel,
+		"log_color",
+		cfg.LogColor,
+		"run_once",
+		cfg.RunOnce,
+	)
 
 	// set up signal handling for graceful shutdown
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -86,7 +112,8 @@ func main() {
 		R2Region:              cfg.R2Region,
 	})
 	if err != nil {
-		log.Fatalf("build handler config: %v", err)
+		logger.Error("build handler initialization failed", "err", err)
+		os.Exit(1)
 	}
 
 	// Initialize and start the consumer loop
@@ -102,7 +129,8 @@ func main() {
 
 	if cfg.RunOnce {
 		if _, err := pullConsumer.RunOnce(ctx); err != nil {
-			log.Fatalf("run once: %v", err)
+			logger.Error("builder worker run once failed", "err", err)
+			os.Exit(1)
 		}
 		return
 	}
@@ -113,7 +141,7 @@ func main() {
 	for {
 		processed, err := pullConsumer.RunOnce(ctx)
 		if err != nil && !errors.Is(err, context.Canceled) {
-			log.Printf("consumer cycle failed: %v", err)
+			logger.Error("consumer cycle failed", "err", err)
 		}
 
 		if processed == 0 {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"builder_worker/internal/logger"
 	"builder_worker/internal/queue"
 )
 
@@ -33,6 +34,16 @@ func (c *Consumer) RunOnce(ctx context.Context) (int, error) {
 	activity := 0
 	acks := make([]string, 0)
 	retries := make([]string, 0)
+
+	logger.Debug(
+		"consumer tick started",
+		"inflight",
+		c.jobHub.InFlight(),
+		"batch_size",
+		c.config.BatchSize,
+		"max_concurrent_builds",
+		c.config.MaxConcurrentBuilds,
+	)
 
 	collectOutcome := func(outcome jobOutcome) {
 		switch outcome.action {
@@ -77,18 +88,32 @@ func (c *Consumer) RunOnce(ctx context.Context) (int, error) {
 	}
 
 	if len(acks)+len(retries) > 0 {
+		logger.Info(
+			"consumer submitting queue outcomes",
+			"ack_count",
+			len(acks),
+			"retry_count",
+			len(retries),
+			"activity",
+			activity,
+		)
 		if err := c.queueClient.Acknowledge(ctx, acks, retries); err != nil {
 			return 0, err
 		}
 	}
+	logger.Debug(
+		"consumer tick completed",
+		"activity",
+		activity,
+		"inflight",
+		c.jobHub.InFlight(),
+	)
 	return activity, nil
 }
 
 func (c *Consumer) InFlight() int {
 	return c.jobHub.InFlight()
 }
-
-
 
 var ErrTerminalHandlerFailure = errors.New("terminal handler failure")
 

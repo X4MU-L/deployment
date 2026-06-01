@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"slices"
 	"strconv"
@@ -17,6 +16,8 @@ type Config struct {
 	CloudflareAccountID     string
 	CloudflareAPIToken      string
 	CloudflareQueueID       string
+	LogLevel                string
+	LogColor                string
 	PullBatchSize           int
 	PullVisibilityTimeoutMS int
 	PullPollInterval        time.Duration
@@ -59,8 +60,8 @@ func LoadFromEnv() (Config, error) {
 
 	// Load the .env file
 	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
+	if err != nil && !os.IsNotExist(err) {
+		return Config{}, fmt.Errorf("load .env: %w", err)
 	}
 
 	cfg := Config{
@@ -68,6 +69,8 @@ func LoadFromEnv() (Config, error) {
 		CloudflareAccountID:     os.Getenv("CP_CLOUDFLARE_ACCOUNT_ID"),
 		CloudflareAPIToken:      os.Getenv("CP_CLOUDFLARE_API_TOKEN"),
 		CloudflareQueueID:       os.Getenv("CP_CLOUDFLARE_QUEUE_ID"),
+		LogLevel:                envOrDefault("CP_LOG_LEVEL", "info"),
+		LogColor:                envOrDefault("CP_LOG_COLOR", "auto"),
 		PullBatchSize:           intEnv("CP_CLOUDFLARE_PULL_BATCH_SIZE", 5),
 		PullPollInterval:        time.Duration(intEnv("CP_CLOUDFLARE_PULL_POLL_INTERVAL_SECONDS", 5)) * time.Second,
 		PullMaxAttempts:         intEnv("CP_CLOUDFLARE_PULL_MAX_ATTEMPTS", 3),
@@ -76,7 +79,7 @@ func LoadFromEnv() (Config, error) {
 		BuildClaimRenewInterval: time.Duration(intEnv("CP_BUILD_CLAIM_RENEW_INTERVAL_SECONDS", 300)) * time.Second,
 		BuildMaxDuration:        time.Duration(intEnv("CP_BUILD_MAX_DURATION_SECONDS", 840)) * time.Second,
 		ControlPlaneBaseURL:     envOrDefault("CP_CELERY_BUILDER_BASE_URL", "http://localhost:8000"),
-		InternalServiceToken:    os.Getenv("CP_INTERNAL_SERVICE_TOKEN"),
+		InternalServiceToken:    envOrDefault("CP_INTERNAL_SERVICE_TOKEN", "dev-internal-service-token"),
 		ServiceName:             envOrDefault("CP_CELERY_BUILDER_SERVICE_NAME", "cloudflare-builder-worker"),
 		BuildExecutorProvider:   envOrDefault("CP_BUILD_EXECUTOR_PROVIDER", "simulated"),
 		SourceFetcherProvider:   envOrDefault("CP_SOURCE_FETCHER_PROVIDER", "docker"),
@@ -168,8 +171,6 @@ func LoadFromEnv() (Config, error) {
 			return Config{}, fmt.Errorf("CP_FETCH_DOCKER_IMAGE must be present in CP_BUILD_DOCKER_ALLOWED_IMAGES")
 		}
 	}
-	
-
 
 	return cfg, nil
 }
